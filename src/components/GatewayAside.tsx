@@ -1,6 +1,6 @@
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { AgentId, AgentState, GatewayAgentUse, GatewayMinute, GatewayStatus } from "../api";
-import { type TKey, t, tn } from "../i18n";
+import { type TKey, locale, t, tn } from "../i18n";
 import { AGENT_NAME, agentLabel } from "../services";
 import { AgentIcon, Icon } from "./icons";
 import { Seg } from "./controls";
@@ -162,6 +162,10 @@ export function GatewayAside({ status: s, agents }: { status: GatewayStatus | nu
                 axis={m.axis ?? m.fmt}
                 log={m.log}
                 label={title}
+                unit={t(m.unit)}
+                dataFmt={m.key === "lat"
+                  ? (v) => (v / 1000).toLocaleString(locale(), { maximumFractionDigits: 3 })
+                  : (v) => Math.round(v).toLocaleString(locale())}
               />
             </div>
           );
@@ -231,13 +235,15 @@ function AgentUsage({ minutes, agents }: { minutes: GatewayMinute[]; agents: Age
 const H = 92;
 const PAD = { top: 8, right: 6, bottom: 18, left: 34 };
 
-function LineChart({ times, series, fmt, axis, log, label }: {
+function LineChart({ times, series, fmt, axis, log, label, unit, dataFmt }: {
   times: number[];
   series: { name: string; tone: Tone; fmt?: (v: number) => string; values: (number | null)[] }[];
   fmt: (v: number) => string;
   axis: (v: number) => string;
   log?: boolean;
   label: string;
+  unit: string;
+  dataFmt: (v: number) => string;
 }) {
   const box = useRef<HTMLDivElement>(null);
   const [w, setW] = useState(300);
@@ -343,6 +349,21 @@ function LineChart({ times, series, fmt, axis, log, label }: {
           })}
         </div>
       )}
+      <details className="gwc-data">
+        <summary>{t("gatewayAside.showValues")}</summary>
+        <div className="gwc-data-scroll" tabIndex={0} role="region" aria-label={t("gatewayAside.dataLabel", { label })}>
+          <table>
+            <caption>{t("gatewayAside.dataCaption", { label, unit })}</caption>
+            <thead><tr><th scope="col">{t("gatewayAside.time")}</th>{series.map((s) => <th scope="col" key={s.name}>{s.name || label}</th>)}</tr></thead>
+            <tbody>{times.map((time, i) => (
+              <tr key={time}>
+                <th scope="row">{new Date(time * 1000).toLocaleTimeString(locale(), { hour: "2-digit", minute: "2-digit" })}</th>
+                {series.map((s) => <td key={s.name}>{s.values[i] == null ? t("gatewayAside.noRequests") : dataFmt(s.values[i]!)}</td>)}
+              </tr>
+            ))}</tbody>
+          </table>
+        </div>
+      </details>
     </div>
   );
 }
