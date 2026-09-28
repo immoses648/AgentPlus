@@ -11,7 +11,8 @@ const zh: typeof en = {
   hint: "点一张卡片查看它在各 Agent 里的情况，可以一键添加、同步地址和密钥或移除。",
   agentCount: "{n} 个 Agent",
   emptyHint: "添加、同步或移除供应商后，这里按 Agent 列出将写入的内容",
-  applyTo: "应用到 {n} 个 Agent",
+  applyTo: "检查 {n} 个 Agent",
+  reviewChanges: "检查改动",
   backupNote: "写入前自动备份原文件",
 };
 

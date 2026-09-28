@@ -3,6 +3,8 @@ export default {
   aria: "Config and changes",
   current: "Current config",
   fromFiles: "Read from config files",
+  refreshPreview: "Refresh preview",
+  previewFailed: "The change preview failed. Refresh it before applying.",
   upToDate: "Config is up to date",
   upToDateHint: "Make changes on the left and what will be written shows up here live",
   footRestart: "Original files are backed up before writing · After applying, click \"Restart {name}\" to take effect",

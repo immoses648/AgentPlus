@@ -74,7 +74,7 @@ export function HubAside({ agents, pending, drafts, stations, detail, busy, onDi
       <div className="aside-foot">
         <div className="grid2">
           <button className="btn full" disabled={!total || busy} onClick={() => onDiscard(null)}>{t("common.discardAll")}</button>
-          <button className="btn primary full" disabled={!total || busy} onClick={onApplyAll}>{busy ? t("common.writing") : withOps.length > 1 ? tn("hubAside.applyTo", withOps.length) : t("common.apply")}</button>
+          <button className="btn primary full" disabled={!total || busy} onClick={onApplyAll}>{busy ? t("common.writing") : withOps.length > 1 ? tn("hubAside.applyTo", withOps.length) : t("hubAside.reviewChanges")}</button>
         </div>
         <span className="muted tiny center hint">{t("hubAside.backupNote")}</span>
       </div>

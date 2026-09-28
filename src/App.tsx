@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { type AgentId, type AgentState, type ApiKind, type ApplyResult, type DiffGroup, type EnvInfo, type GatewayRouteView, type GatewayStatus, type ImportRequest, type LibEntry, type ModelGuess, type Op, type ProjectEntry, type ProviderInput, type SyncAutoResult, type SyncSuggestion, api, isProjectId, sameLaunch } from "./api";
+import { type AgentId, type AgentState, type ApiKind, type ApplyResult, type EnvInfo, type GatewayRouteView, type GatewayStatus, type ImportRequest, type LibEntry, type ModelGuess, type Op, type ProjectEntry, type ProviderInput, type SyncAutoResult, type SyncSuggestion, api, isProjectId, sameLaunch } from "./api";
 import {
   CATALOG, type Draft, type ViewProvider, currentProvider, deleteModel, deleteProvider, draftAfterWrite, guessedModel, importProvider, isEnabled, isVisible, keys, opCount,
   opsToWrite, pendingTotal, removeProvider, setModelVisible, setProviderEnabled, setSetting, shouldAutoRestart, upsertModel, upsertProvider, viewModels, viewProviders,
@@ -42,7 +42,7 @@ import { ContextMenu, type MenuItem, editableOf, insertText, selectedIn } from "
 import { ProjectHead, ProjectList } from "./components/ProjectsPage";
 import { type CopyPick, CopyProviderDialog } from "./components/CopyProviderDialog";
 import { type RestartRun, RestartDialog, applyProgress, finishRun, newRun } from "./components/RestartDialog";
-import { useDismiss } from "./hooks";
+import { useDismiss, usePreviews } from "./hooks";
 import { inTauri } from "./tauri";
 import { scrub, usePrivacy } from "./privacy";
 import { copyText, errText } from "./util";
@@ -76,10 +76,11 @@ export default function App() {
   const [selected, setSelected] = useState<AgentId>("codex");
   const [page, setPage] = useState<Page | null>(null);
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
-  const [diff, setDiff] = useState<DiffGroup[]>([]);
-  const [diffError, setDiffError] = useState<string | null>(null);
+  const [previewRevision, setPreviewRevision] = useState(0);
   const [latency, setLatency] = useState<Record<string, Latency>>({});
   const [busy, setBusy] = useState(false);
+  const [batchReview, setBatchReview] = useState<{ only?: AgentId; restart?: AgentState } | null>(null);
+  const [batchError, setBatchError] = useState<string | null>(null);
   const [restarting, setRestarting] = useState<AgentId | null>(null);
   /** The restart shown in the progress dialog; null when closed or sent to the background. */
   const [run, setRun] = useState<RestartRun | null>(null);
@@ -255,8 +256,9 @@ export default function App() {
   /** The current gateway host first, then earlier ports: addresses there still point at the gateway. */
   const formerKey = (gateway?.formerPorts ?? []).join(",");
   const gatewayHosts = useMemo(() => (gateway ? [gateway.port, ...(gateway.formerPorts ?? [])].map((p) => `127.0.0.1:${p}`) : []), [gateway?.port, formerKey]);
-  /** Every agent shown here plus the open project configs: what "apply all" / "discard all" act on. */
+  /** Visible agents plus open project configs for the provider and gateway views. */
   const allStates = useMemo(() => [...shown, ...Object.values(projStates)], [shown, projStates]);
+  const reviewStates = useMemo(() => [...agents, ...Object.values(projStates)], [agents, projStates]);
   const stations = useMemo(() => buildStations(shown, drafts, lib, gatewayHosts), [shown, drafts, lib, gatewayHosts, lang]);
 
   /** Drafts with every agent address at one of `from` (gateway ports) moved to `port`, and how many moved. */
@@ -367,21 +369,11 @@ export default function App() {
     return () => { off.then((f) => f()); };
   }, []);
 
-  // Live diff preview for the selected agent.
-  useEffect(() => {
-    if (!st) return;
-    if (ops.length === 0) {
-      // `ops` is a fresh [] on every render while there is no draft; keep the same array so this doesn't loop.
-      setDiff((d) => (d.length ? [] : d));
-      setDiffError(null);
-      return;
-    }
-    let alive = true;
-    api.preview(st.id, opsToWrite(st, draft))
-      .then((d) => { if (alive) { setDiff(d); setDiffError(null); } })
-      .catch((e) => { if (alive) { setDiff([]); setDiffError(errText(e)); } });
-    return () => { alive = false; };
-  }, [st, ops]);
+  const previews = usePreviews(st ? [st] : [], drafts, previewRevision);
+  const preview = previews[sid];
+  const previewReady = Array.isArray(preview);
+  const diff = Array.isArray(preview) ? preview : [];
+  const diffError = typeof preview === "string" ? preview || t("aside.previewFailed") : null;
 
   const testOne = (url: string) => {
     setLatency((l) => ({ ...l, [url]: "pending" }));
@@ -498,7 +490,10 @@ export default function App() {
         check: { label: t("app.applyFirst"), hint: t("app.applyFirstHint"), value: true },
       });
       if (applyFirst === null) return;
-      if (applyFirst && !(await applyAgents([a.id], false))) return;
+      if (applyFirst) {
+        reviewAgent(a, true);
+        return;
+      }
     }
     await restartAgent(a);
   };
@@ -575,7 +570,7 @@ export default function App() {
   };
 
   const apply = async () => {
-    if (!st) return;
+    if (!st || busy || st.readonly || !ops.length || !previewReady) return;
     setBusy(true);
     const sentOps = opsToWrite(st, draft);
     try {
@@ -594,6 +589,7 @@ export default function App() {
   /** Applies the given agents' pending changes one by one; true when all succeeded. */
   const applyAgents = async (ids: AgentId[], autoRestart = true): Promise<boolean> => {
     setBusy(true);
+    setBatchError(null);
     const done: string[] = [];
     try {
       // Every agent with a draft, also one that no longer reads as installed: the pending count includes it.
@@ -606,13 +602,32 @@ export default function App() {
       reportBatch(done);
       return true;
     } catch (e) {
+      setBatchError(done.length ? t("app.wrotePartial", { names: joinList(done), err: errText(e) }) : errText(e));
       reportBatch(done, errText(e));
       return false;
     } finally {
       setBusy(false);
     }
   };
-  const applyAll = () => applyAgents([...agents.map((a) => a.id), ...(Object.keys(projStates) as AgentId[])]);
+  const applyAll = () => {
+    if (busy || !totalPending) return;
+    setBatchError(null);
+    setBatchReview({});
+  };
+  const reviewAgent = (a: AgentState, restart = false) => {
+    if (busy) return;
+    setBatchError(null);
+    setBatchReview({ only: a.id, restart: restart ? a : undefined });
+  };
+  const confirmBatch = async (ids: AgentId[]) => {
+    if (!ids.length || busy) return;
+    const restart = batchReview?.restart;
+    if (restart && !ids.includes(restart.id)) return;
+    if (await applyAgents(ids, !restart)) {
+      setBatchReview(null);
+      if (restart) await restartAgent(restart);
+    }
+  };
 
   /** Env switch with pending changes: ask which to apply, discard the rest, then switch. */
   const [envAsk, setEnvAsk] = useState<string | null>(null);
@@ -638,7 +653,7 @@ export default function App() {
     }
   };
   const switchEnv = (id: string) => {
-    if (totalPending) setEnvAsk(id);
+    if (totalPending) { setBatchError(null); setEnvAsk(id); }
     else doSwitch(id);
   };
   const confirmSwitch = async (apply: AgentId[]) => {
@@ -1227,7 +1242,7 @@ export default function App() {
           { label: t("common.openConfigDir"), icon: <Icon.folder size={13} />, action: () => attempt(api.openConfigDir(a.id)) },
           ...(n ? [
             "sep" as const,
-            { label: tn("app.applyAgentChanges", n, { name: a.name }), icon: <Icon.check size={13} />, disabled: busy, action: () => { applyAgents([a.id]); } },
+            { label: tn("app.applyAgentChanges", n, { name: a.name }), icon: <Icon.check size={13} />, disabled: busy, action: () => reviewAgent(a) },
             { label: t("app.discardAgentChanges", { name: a.name }), icon: <Icon.close size={11} />, danger: true, action: async () => {
               if (await ask({ title: tn("app.discardAgentTitle", n, { name: a.name }), message: t("app.discardMsg"), danger: true, confirmText: t("common.discard") })) setDraftFor(a.id, {});
             } },
@@ -1423,7 +1438,7 @@ export default function App() {
         {page === "providers" && (
           <HubAside
             agents={shown}
-            pending={allStates}
+            pending={reviewStates}
             drafts={drafts}
             stations={stations}
             busy={busy}
@@ -1539,7 +1554,9 @@ export default function App() {
             diff={diff}
             pending={ops.length}
             error={diffError}
+            previewReady={previewReady}
             busy={busy}
+            onRefresh={() => setPreviewRevision((n) => n + 1)}
             onDiscard={() => setDraft({})}
             onApply={apply}
             detail={pickedProvider && (
@@ -1579,12 +1596,19 @@ export default function App() {
       {envAsk && (
         <PendingDialog
           title={t("app.beforeSwitch", { env: envs.find((e) => e.id === envAsk)?.label ?? envAsk })}
-          agents={allStates}
+          agents={reviewStates}
           drafts={drafts}
           busy={busy || switching}
+          error={batchError}
           onConfirm={confirmSwitch}
           onCancel={() => setEnvAsk(null)}
         />
+      )}
+      {batchReview && (
+        <PendingDialog key={batchReview.only ?? "all"}
+          title={batchReview.restart ? t(batchReview.restart.running ? "app.reviewRestart" : "app.reviewStart", { name: batchReview.restart.name }) : t("app.reviewAll")}
+          mode="review" agents={batchReview.only ? reviewStates.filter((a) => a.id === batchReview.only) : reviewStates} drafts={drafts} busy={busy}
+          error={batchError} onConfirm={confirmBatch} onCancel={() => setBatchReview(null)} />
       )}
       {run && <RestartDialog run={run} onClose={closeRun} onCancel={cancelRun} />}
       {closeAsk && <CloseDialog onDone={closeAsk} />}

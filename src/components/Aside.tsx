@@ -10,11 +10,13 @@ interface Props {
   diff: DiffGroup[];
   pending: number;
   error: string | null;
+  previewReady: boolean;
   busy: boolean;
   /** Provider details replace "Current config" while a card is selected. */
   detail: ReactNode | null;
   onDiscard: () => void;
   onApply: () => void;
+  onRefresh: () => void;
 }
 
 /** Allow line breaks after `_` / `.` so long keys like GOOGLE_GEMINI_BASE_URL wrap at word boundaries. */
@@ -23,7 +25,7 @@ function breakable(k: string): ReactNode {
   return parts.length < 2 ? k : parts.map((p, i) => <span key={i}>{p}{i < parts.length - 1 && <wbr />}</span>);
 }
 
-export function Aside({ st, diff, pending, error, busy, detail, onDiscard, onApply }: Props) {
+export function Aside({ st, diff, pending, error, previewReady, busy, detail, onDiscard, onApply, onRefresh }: Props) {
   return (
     <aside className="aside" aria-label={t("aside.aria")}>
       {detail ?? <section className="aside-cur">
@@ -48,14 +50,16 @@ export function Aside({ st, diff, pending, error, busy, detail, onDiscard, onApp
           <span className={`count${pending ? " warn" : ""}`}>{pending ? tn("common.changeCount", pending) : t("common.none")}</span>
         </div>
         {error && <ErrorBox text={error} />}
+        {pending > 0 && !previewReady && !error && <p className="muted small" role="status">{t("common.reading")}</p>}
         <DiffGroups groups={diff} />
+        {pending > 0 && <button className="btn small" disabled={busy} onClick={onRefresh}>{t("aside.refreshPreview")}</button>}
         {pending === 0 && !error && <UpToDate hint={t("aside.upToDateHint")} />}
       </section>
 
       <div className="aside-foot">
         <div className="grid2">
           <button className="btn full" disabled={!pending || busy} onClick={onDiscard}>{t("common.discard")}</button>
-          <button className="btn primary full" disabled={!pending || busy || st.readonly} onClick={onApply}>{busy ? t("common.writing") : t("common.apply")}</button>
+          <button className="btn primary full" disabled={!pending || busy || st.readonly || !previewReady || error !== null} onClick={onApply}>{busy ? t("common.writing") : t("common.apply")}</button>
         </div>
         <span className="muted tiny center hint">{st.restartable
           ? t(st.running ? "aside.footRestart" : "aside.footStart", { name: st.name })

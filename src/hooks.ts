@@ -282,22 +282,26 @@ export function useLoad<T>(fetch: () => Promise<T>, deps: DependencyList, opts: 
  * The diff each agent's pending changes would write, by agent id (an error text when the
  * preview failed). Re-read when the drafts change, and in the new language after a switch.
  */
-export function usePreviews(agents: AgentState[], drafts: Record<string, Draft>): Record<string, DiffGroup[] | string> {
-  const [diffs, setDiffs] = useState<Record<string, DiffGroup[] | string>>({});
+export function usePreviews(agents: AgentState[], drafts: Record<string, Draft>, revision = 0): Record<string, DiffGroup[] | string> {
   const lang = useLang();
   // Callers may build the list on every render: only a different set of states counts.
   const seen = useRef(agents);
   if (seen.current.length !== agents.length || seen.current.some((a, i) => a !== agents[i])) seen.current = agents;
   const list = seen.current;
+  const [preview, setPreview] = useState<{ list: AgentState[]; drafts: Record<string, Draft>; lang: string; revision: number; diffs: Record<string, DiffGroup[] | string> } | null>(null);
   useEffect(() => {
     let alive = true;
+    const current = { list, drafts, lang, revision };
+    setPreview({ ...current, diffs: {} });
     for (const a of list) {
       if (!opCount(drafts[a.id])) continue;
       api.preview(a.id, opsToWrite(a, drafts[a.id]))
-        .then((d) => { if (alive) setDiffs((m) => ({ ...m, [a.id]: d })); })
-        .catch((e) => { if (alive) setDiffs((m) => ({ ...m, [a.id]: errText(e) })); });
+        .then((d) => { if (alive) setPreview((p) => ({ ...current, diffs: { ...p?.diffs, [a.id]: d } })); })
+        .catch((e) => { if (alive) setPreview((p) => ({ ...current, diffs: { ...p?.diffs, [a.id]: errText(e) } })); });
     }
     return () => { alive = false; };
-  }, [list, drafts, lang]);
-  return diffs;
+  }, [list, drafts, lang, revision]);
+  // Invalidate synchronously: an old diff must never enable applying a new draft
+  // during the render before the replacement preview's effect starts.
+  return preview?.list === list && preview.drafts === drafts && preview.lang === lang && preview.revision === revision ? preview.diffs : {};
 }

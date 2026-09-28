@@ -5,6 +5,8 @@ const zh: typeof en = {
   aria: "配置与改动",
   current: "当前配置",
   fromFiles: "读取自配置文件",
+  refreshPreview: "刷新预览",
+  previewFailed: "改动预览失败。请刷新预览后再应用。",
   upToDate: "配置已是最新",
   upToDateHint: "在左侧修改后，这里实时列出将写入的内容",
   footRestart: "写入前自动备份原文件 · 应用后点「重启 {name}」生效",

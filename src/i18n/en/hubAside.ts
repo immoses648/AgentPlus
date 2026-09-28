@@ -9,6 +9,7 @@ export default {
   hint: "Click a card to see how it's used in each agent. Add it, sync its URL and API key, or remove it in one click.",
   agentCount: "{n} agent|{n} agents",
   emptyHint: "After you add, sync or remove providers, what will be written is listed here by agent",
-  applyTo: "Apply to {n} agent|Apply to {n} agents",
+  applyTo: "Review {n} agent|Review {n} agents",
+  reviewChanges: "Review changes",
   backupNote: "Original files are backed up before writing",
 };
