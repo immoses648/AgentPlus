@@ -10,7 +10,7 @@ import { AgentIcon, EnvIcon, Icon } from "./icons";
 import { Modal } from "./Modal";
 import { ask } from "./Confirm";
 import { ErrorBox, Seg, SettingRow, Switch } from "./controls";
-import { TabBar, useSlideDir } from "./TabBar";
+import { TabBar, tabPanelProps, useSlideDir } from "./TabBar";
 import { scrub } from "../privacy";
 import { fmtSize } from "../format";
 import { RELEASES_URL, checkUpdate, installUpdate, updateBusy, useUpdate } from "../updater";
@@ -82,9 +82,9 @@ export function SettingsPage(props: Props) {
           </div>
           <button className="icon-btn" aria-label={t("settingsPage.closeSettings")} title={t("settingsPage.closeEsc")} onClick={props.onClose}><Icon.close /></button>
         </div>
-        <TabBar items={[{ id: "general", label: t("settingsPage.tabGeneral") }, { id: "agents", label: t("settingsPage.tabAgents") }]} value={tab} onChange={setTab} />
+        <TabBar id="settings-tabs" label={t("settingsPage.title")} items={[{ id: "general", label: t("settingsPage.tabGeneral") }, { id: "agents", label: t("settingsPage.tabAgents") }]} value={tab} onChange={setTab} />
       </div>
-      <div className={`page-body slide-${slide}`} key={tab}>
+      <div className={`page-body slide-${slide}`} key={tab} {...tabPanelProps("settings-tabs", tab)}>
         {tab === "general" ? <General {...props} /> : <Detection envLabel={env?.label ?? localEnvLabel()} onChanged={props.onAgentsChanged} flash={props.flash} prefs={props.prefs} setPrefs={props.setPrefs} />}
       </div>
     </main>

@@ -1,5 +1,5 @@
 import type { KeyboardEventHandler, ReactNode } from "react";
-import { useEscape } from "../hooks";
+import { useEscape, useModalFocus } from "../hooks";
 import { t } from "../i18n";
 import { Icon } from "./icons";
 import { ToggleRow } from "./controls";
@@ -32,11 +32,12 @@ interface ModalProps {
  * exit animation in motion.ts expect). Esc closes it — the topmost dialog only.
  */
 export function Modal({ label, title, onClose, busy, wide, className, bgClassName, role = "dialog", backdropClose = true, foot, bare, onKeyDown, children }: ModalProps) {
+  const focus = useModalFocus<HTMLDivElement>();
   const close = () => { if (!busy) onClose(); };
   useEscape(close);
   return (
     <div className={`modal-bg${bgClassName ? ` ${bgClassName}` : ""}`} onMouseDown={(e) => { if (backdropClose && e.target === e.currentTarget) close(); }}>
-      <div className={`modal${wide ? " wide" : ""}${className ? ` ${className}` : ""}`} role={role} aria-modal="true" aria-label={label} onKeyDown={onKeyDown}>
+      <div ref={focus} tabIndex={-1} className={`modal${wide ? " wide" : ""}${className ? ` ${className}` : ""}`} role={role} aria-modal="true" aria-label={label} onKeyDown={onKeyDown}>
         {title !== undefined && (
           <div className="modal-head">
             <h2>{title}</h2>

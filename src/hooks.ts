@@ -3,6 +3,17 @@ import { type AgentState, type DiffGroup, api } from "./api";
 import { type Draft, opCount, opsToWrite } from "./draft";
 import { useLang } from "./i18n";
 import { errText } from "./util";
+import { containModalFocus } from "./focus";
+
+/** Captures the trigger before child autoFocus runs, then contains focus while mounted. */
+export function useModalFocus<T extends HTMLElement>() {
+  const root = useRef<T>(null);
+  const restore = useRef(document.activeElement instanceof HTMLElement ? document.activeElement : null);
+  useLayoutEffect(() => {
+    if (root.current) return containModalFocus(root.current, restore.current);
+  }, []);
+  return root;
+}
 
 /** A ref that always holds the latest `value` (for listeners that are registered once). */
 export function useLatest<T>(value: T) {

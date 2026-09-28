@@ -4,7 +4,7 @@ import { AgentIcon, Icon } from "./icons";
 import { ErrorBox, Seg, SettingRow, Switch, ToggleRow } from "./controls";
 import { ConfirmFrame, Modal } from "./Modal";
 import { ask } from "./Confirm";
-import { useEscape } from "../hooks";
+import { useEscape, useModalFocus } from "../hooks";
 import { syncSuggestionIds } from "../services";
 import { locale, t, tn, useLang } from "../i18n";
 import { scrub } from "../privacy";
@@ -386,6 +386,7 @@ function PlainKeysWarning(props: PlainKeysProps) {
 const HAZARD_EXIT_MS = 560;
 
 function HazardScreen({ onCancel, onSetPassword, onContinue }: PlainKeysProps) {
+  const focus = useModalFocus<HTMLDivElement>();
   const [leaving, setLeaving] = useState(false);
   const timer = useRef(0);
   useEffect(() => () => window.clearTimeout(timer.current), []);
@@ -397,7 +398,7 @@ function HazardScreen({ onCancel, onSetPassword, onContinue }: PlainKeysProps) {
   };
   useEscape(leave(onCancel));
   return (
-    <div className={`hz-screen${leaving ? " out" : ""}`} role="alertdialog" aria-modal="true" aria-labelledby="hz-title" aria-describedby="hz-text">
+    <div ref={focus} tabIndex={-1} className={`hz-screen${leaving ? " out" : ""}`} role="alertdialog" aria-modal="true" aria-labelledby="hz-title" aria-describedby="hz-text">
       <div className="hz-tape a" />
       <div className="hz-tape b" />
       <div className="hz-card">

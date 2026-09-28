@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import { type AgentId, type AgentState, type SessionRow, api } from "../api";
 import type { Tab } from "./AgentPage";
 import type { SettingsTab } from "./SettingsPage";
 import type { Page } from "./Sidebar";
 import { AgentIcon, Icon } from "./icons";
 import { type TKey, t, useLang } from "../i18n";
-import { useEscape, useListNav } from "../hooks";
+import { useEscape, useListNav, useModalFocus } from "../hooks";
 import { scrubHost, usePrivacy } from "../privacy";
 import { SYNC_ENABLED } from "../features";
 
@@ -48,12 +48,12 @@ interface Props {
 export function CommandPalette({ agents, onGo, onClose }: Props) {
   const [q, setQ] = useState("");
   const [sessions, setSessions] = useState<SessionRow[]>([]);
-  const input = useRef<HTMLInputElement>(null);
+  const focus = useModalFocus<HTMLDivElement>();
+  const listId = useId();
   const lang = useLang();
   const privacy = usePrivacy();
 
   useEffect(() => {
-    input.current?.focus();
     if (agents.some((a) => a.id === "codex" && a.installed)) api.codexSessions().then((s) => setSessions(s.sessions)).catch(() => undefined);
   }, [agents]);
 
@@ -119,10 +119,16 @@ export function CommandPalette({ agents, onGo, onClose }: Props) {
 
   return (
     <div className="modal-bg top" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="palette" role="dialog" aria-modal="true" aria-label={t("common.search")}>
+      <div ref={focus} tabIndex={-1} className="palette" role="dialog" aria-modal="true" aria-label={t("common.search")}>
         <input
-          ref={input}
+          autoFocus
           className="palette-input"
+          role="combobox"
+          aria-label={t("commandPalette.placeholder")}
+          aria-expanded="true"
+          aria-controls={listId}
+          aria-activedescendant={results[nav.hi] ? `${listId}-${nav.hi}` : undefined}
+          aria-autocomplete="list"
           value={q}
           placeholder={t("commandPalette.placeholder")}
           onChange={(e) => setQ(e.target.value)}
@@ -130,10 +136,10 @@ export function CommandPalette({ agents, onGo, onClose }: Props) {
             if (!nav.onKey(e) && e.key === "Enter") go(results[nav.hi]);
           }}
         />
-        <div className="palette-list" ref={nav.list}>
+        <div className="palette-list" ref={nav.list} id={listId} role="listbox" aria-label={t("common.search")}>
           {results.length === 0 && <div className="muted small palette-empty">{t("commandPalette.noResults", { q })}</div>}
           {results.map((r, i) => (
-            <button key={`${r.group}-${r.label}-${r.hint}-${i}`} className={`palette-item${i === nav.hi ? " on" : ""}${r.disabled ? " off" : ""}`} aria-disabled={r.disabled}
+            <button key={`${r.group}-${r.label}-${r.hint}-${i}`} id={`${listId}-${i}`} role="option" aria-selected={i === nav.hi} tabIndex={-1} className={`palette-item${i === nav.hi ? " on" : ""}${r.disabled ? " off" : ""}`} aria-disabled={r.disabled}
               onMouseEnter={() => nav.setHi(i)} onClick={() => go(r)}>
               {r.agent ? <AgentIcon id={r.agent} size={18} /> : <span className="palette-dot">{r.icon}</span>}
               <span className="grow minw0">

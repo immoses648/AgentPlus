@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { type AgentState, type Model, type ModelField, type ModelFieldValue, type ModelGuess, type ModelInput, type ModelTag, type Setting, type SettingValue, api, isProjectId } from "../api";
 import {
   CATALOG, type Draft, type ViewModel, type ViewProvider, currentProvider, deleteModel, guessedModel, isEnabled, isVisible, keys, mergeExtra, opCount,
@@ -8,7 +8,7 @@ import { AgentIcon, Icon, OptCheck } from "./icons";
 import { MaintenanceTab } from "./MaintenanceTab";
 import { type Latency, ProviderCard, testUrl } from "./ProviderCard";
 import { SessionsTab } from "./SessionsTab";
-import { TabBar, useSlideDir } from "./TabBar";
+import { TabBar, tabPanelProps, useSlideDir } from "./TabBar";
 import { OfficialFetch } from "./OfficialFetch";
 import { ask } from "./Confirm";
 import { ComboBox } from "./ComboBox";
@@ -54,6 +54,7 @@ interface Props {
 }
 
 export function AgentPage(props: Props) {
+  const tabId = useId();
   const { st, draft, setDraft, latency, onTestAll, restarting, onRestart, onOpenDir, tab, setTab, railSel, setRailSel } = props;
   const cur = currentProvider(st, draft);
   const providers = viewProviders(st, draft, isProjectId(st.id));
@@ -107,10 +108,10 @@ export function AgentPage(props: Props) {
         {st.notes.length > 0 && (
           <div className="notes">{st.notes.map((n) => <span key={n}>{scrub(n)}</span>)}</div>
         )}
-        <TabBar items={tabs.map(([id, label, n]) => ({ id, label, count: n }))} value={tab} onChange={setTab} />
+        <TabBar id={tabId} label={st.name} items={tabs.map(([id, label, n]) => ({ id, label, count: n }))} value={tab} onChange={setTab} />
       </div>
 
-      <div className={`page-body slide-${slide}`} key={tab}>
+      <div {...tabPanelProps(tabId, tab)} className={`page-body slide-${slide}`} key={tab}>
         {tab === "prov" && (
           <div className="stack12">
             <div className="row between">
@@ -384,7 +385,7 @@ function ModelTable({ st, title, note, pid, fetchFrom, models, base, draft, setD
           <div className="strong ellipsis">{title}</div>
           <div className={`muted small${readonly ? "" : " hint"}`}>{note}</div>
         </div>
-        <input className="search-input slim" placeholder={t("common.filter")} value={filter} onChange={(e) => setFilter(e.target.value)} />
+        <input className="search-input slim" aria-label={t("common.filter")} placeholder={t("common.filter")} value={filter} onChange={(e) => setFilter(e.target.value)} />
         <button className="btn small" disabled={readonly || !fetchFrom || fetching} onClick={doFetch} title={fetchFrom ? "" : t("agentPage.noFetchUrl")}>
           <Icon.refresh size={12} />{fetching ? t("common.fetching") : t("agentPage.fetchModels")}
         </button>

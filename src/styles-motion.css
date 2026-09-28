@@ -171,3 +171,13 @@
 .ap-ghost :is(.modal, .palette) { animation: ap-out-pop .26s var(--ease-smooth) forwards !important; }
 .ap-ghost:is(.dd-menu, .ctx-menu) { animation: ap-out-menu .2s var(--ease-smooth) forwards !important; }
 .ap-ghost.toast { animation: ap-out-toast .3s var(--ease-smooth) forwards !important; }
+
+/* Keep the chosen motion level intact; the system preference overrides only its
+   movement. Loading spinners still distinguish work in progress from idle state. */
+@media (prefers-reduced-motion: reduce) {
+  :root *:not(.spin):not(.rs-ring):not(.lat-re), :root *::before, :root *::after { animation: none !important; }
+  :root *, :root *::before, :root *::after { transition: none !important; }
+  :root :is(.btn, .pbtn, .icon-btn, .apick, .chip, .seg button, .env-card, .opt, .acct, .agent-row, .side-link, .rail-item, .pcard, .hcard) { transform: none !important; }
+  :root .swap-out, :root .ap-ghost { display: none !important; }
+  :root[data-motion="rich"] :is(.input, .search-input) { outline-offset: 0; }
+}

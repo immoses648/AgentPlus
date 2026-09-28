@@ -6,7 +6,7 @@
   --ink: #121722;
   --ink2: #2A323D;
   --muted: #5D6775;
-  --faint: #8A93A0;
+  --faint: #626D7A;
   --line: #E2E6EC;
   --line2: #EEF0F3;
   --accent: #2F54EB;
@@ -94,7 +94,7 @@
   --ink3: #B4BBC5;
   --ink4: #939CA8;
   --muted: #9AA3AF;
-  --faint: #6E7783;
+  --faint: #A0A8B4;
   --faint2: #58606B;
   --line: #2D333B;
   --line2: #262B32;
@@ -158,6 +158,7 @@ body { background: var(--bg); color: var(--ink); font: 14px/1.5 var(--sans); -we
 button { font: inherit; color: inherit; cursor: pointer; }
 button:disabled { cursor: not-allowed; }
 button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+summary:focus-visible, [role="tabpanel"]:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 h1, h2 { margin: 0; }
 
 .mono { font-family: var(--mono); }

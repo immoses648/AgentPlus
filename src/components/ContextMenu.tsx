@@ -1,5 +1,6 @@
 import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useLatest, useListNav, usePopover } from "../hooks";
+import { containModalSurface } from "../focus";
 
 export type MenuItem =
   | { label: string; icon?: ReactNode; hint?: string; danger?: boolean; disabled?: boolean; action: () => void }
@@ -12,7 +13,7 @@ interface Props {
 
 /** Replaces the webview's default right-click menu with the app's own. */
 export function ContextMenu({ build }: Props) {
-  const [menu, setMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null);
+  const [menu, setMenu] = useState<{ x: number; y: number; items: MenuItem[]; origin: Element } | null>(null);
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
   const ref = useRef<HTMLDivElement>(null);
   const buildRef = useLatest(build);
@@ -27,13 +28,18 @@ export function ContextMenu({ build }: Props) {
       const items = buildRef.current(t, e);
       // Drop leading / trailing / doubled separators.
       const clean = items.filter((it, i, a) => it !== "sep" || (i > 0 && i < a.length - 1 && a[i - 1] !== "sep"));
-      setMenu(clean.length ? { x: e.clientX, y: e.clientY, items: clean } : null);
+      setMenu(clean.length ? { x: e.clientX, y: e.clientY, items: clean, origin: t } : null);
       setPos(null);
       nav.setHi(-1);
     };
     document.addEventListener("contextmenu", onMenu);
     return () => document.removeEventListener("contextmenu", onMenu);
   }, []);
+
+  useLayoutEffect(() => {
+    if (!menu || !ref.current) return;
+    return containModalSurface(ref.current, menu.origin, () => setMenu(null));
+  }, [menu]);
 
   // Keep the menu inside the window.
   useLayoutEffect(() => {

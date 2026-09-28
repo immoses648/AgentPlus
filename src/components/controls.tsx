@@ -3,6 +3,7 @@
 import { type ReactNode, useEffect, useReducer, useRef } from "react";
 import { useLang } from "../i18n";
 import { scrub } from "../privacy";
+import { nextFocusIndex } from "../focus";
 
 /**
  * Text that changes wording in place (a setting's description following its value): the new
@@ -87,11 +88,21 @@ export interface SegOption<T> {
 export function Seg<T extends string | number>({ value, options, onChange, label, className }: {
   value: T; options: SegOption<T>[]; onChange: (v: T) => void; label?: string; className?: string;
 }) {
+  const root = useRef<HTMLDivElement>(null);
+  const selected = options.findIndex((o) => o.value === value && !o.disabled);
+  const tabStop = selected >= 0 ? selected : options.findIndex((o) => !o.disabled);
   return (
-    <div className={`seg${className ? ` ${className}` : ""}`} role="radiogroup" aria-label={label}>
-      {options.map((o) => (
+    <div ref={root} className={`seg${className ? ` ${className}` : ""}`} role="radiogroup" aria-label={label}>
+      {options.map((o, i) => (
         <button key={String(o.value)} type="button" role="radio" aria-checked={value === o.value} className={value === o.value ? "on" : ""}
-          title={o.title} disabled={o.disabled} lang={o.lang} onClick={() => onChange(o.value)}>{o.label}</button>
+          tabIndex={i === tabStop ? 0 : -1} title={o.title} disabled={o.disabled} lang={o.lang} onClick={() => onChange(o.value)}
+          onKeyDown={(e) => {
+            const next = nextFocusIndex(e.key, i, options.map((item) => !item.disabled), true);
+            if (next === null) return;
+            e.preventDefault();
+            onChange(options[next].value);
+            root.current?.querySelectorAll<HTMLButtonElement>("[role='radio']")[next]?.focus();
+          }}>{o.label}</button>
       ))}
     </div>
   );

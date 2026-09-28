@@ -1,4 +1,5 @@
 import { type ReactNode, useLayoutEffect, useRef, useState } from "react";
+import { nextFocusIndex } from "../focus";
 
 export interface TabItem<T extends string> {
   id: T;
@@ -7,13 +8,15 @@ export interface TabItem<T extends string> {
 }
 
 interface Props<T extends string> {
+  id: string;
+  label: string;
   items: TabItem<T>[];
   value: T;
   onChange: (id: T) => void;
 }
 
 /** Tab strip with an underline that slides to the chosen tab. */
-export function TabBar<T extends string>({ items, value, onChange }: Props<T>) {
+export function TabBar<T extends string>({ id, label, items, value, onChange }: Props<T>) {
   const root = useRef<HTMLDivElement>(null);
   const [bar, setBar] = useState<{ left: number; width: number } | null>(null);
 
@@ -35,15 +38,29 @@ export function TabBar<T extends string>({ items, value, onChange }: Props<T>) {
   }, [value, ids]);
 
   return (
-    <div className="tabs" role="tablist" ref={root}>
-      {items.map((t) => (
-        <button key={t.id} data-tab={t.id} role="tab" aria-selected={value === t.id} className={`tab${value === t.id ? " on" : ""}`} onClick={() => onChange(t.id)}>
+    <div className="tabs" role="tablist" aria-label={label} ref={root}>
+      {items.map((t, i) => (
+        <button key={t.id} id={`${id}-${t.id}`} data-tab={t.id} type="button" role="tab" aria-selected={value === t.id}
+          aria-controls={`${id}-panel`} tabIndex={value === t.id ? 0 : -1}
+          className={`tab${value === t.id ? " on" : ""}`} onClick={() => onChange(t.id)}
+          onKeyDown={(e) => {
+            const next = nextFocusIndex(e.key, i, items.map(() => true));
+            if (next === null) return;
+            e.preventDefault();
+            onChange(items[next].id);
+            root.current?.querySelectorAll<HTMLButtonElement>("[role='tab']")[next]?.focus();
+          }}>
           {t.label}{t.count != null && <span className="tab-count">{t.count}</span>}
         </button>
       ))}
       {bar && <span className="tab-bar" style={{ transform: `translateX(${bar.left}px)`, width: bar.width }} aria-hidden="true" />}
     </div>
   );
+}
+
+/** The mounted panel is shared by the tabs and named by the active tab. */
+export function tabPanelProps(id: string, value: string) {
+  return { id: `${id}-panel`, role: "tabpanel", "aria-labelledby": `${id}-${value}`, tabIndex: 0 };
 }
 
 /**
