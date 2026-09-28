@@ -6,6 +6,8 @@ export default {
   searchPlaceholder: "Search providers, models, settings, sessions",
   settings: "Settings",
   loadingConfig: "Reading configs…",
+  storeRecoveryTitle: "AgentPlus data needs attention",
+  storeRecoveryHint: "Changes that depend on this data are blocked. Keep a copy of store.json, then correct it or restore a known-good copy in the data folder. Refresh to try again. Agent configuration backups do not contain the complete provider library.",
 
   // Toasts
   breakerPaused: "Forward \"{name}\" kept failing and is paused for {secs}s: {reason}",

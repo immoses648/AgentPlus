@@ -8,7 +8,7 @@
 //! under that one lock.
 
 use crate::util::agentplus_dir;
-use anyhow::Context;
+use anyhow::{anyhow, bail, Result};
 use serde_json::{json, Map, Value};
 use std::fs;
 use std::path::Path;
@@ -17,34 +17,48 @@ use std::time::Duration;
 
 static WRITE: Mutex<()> = Mutex::new(());
 
-fn read(p: &Path) -> Option<Value> {
-    let text = fs::read_to_string(p).ok()?;
+fn read(p: &Path) -> Result<Value> {
+    let text = match fs::read_to_string(p) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound
+            && fs::symlink_metadata(p).is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound) => return Ok(json!({})),
+        Err(e) => bail!("{}", tr!("Can't read {}: {e}. Restore access before saving; the file has not been changed", "无法读取 {}：{e}。请恢复访问权限后再保存；原文件未改动", p.display())),
+    };
     if text.trim().is_empty() {
-        return None;
+        bail!("{}", tr!("{} is empty. Restore a valid store before saving; the file has not been changed", "{} 是空文件。请先恢复有效的数据文件再保存；原文件未改动", p.display()));
     }
     // Every writer indexes into the top level as an object: `[]` or `1` counts as broken.
-    serde_json::from_str::<Value>(&text).ok().filter(|v| v.is_object())
+    let value = serde_json::from_str::<Value>(&text).map_err(|_| anyhow!(tr!("{} is not valid JSON. Repair it or restore a backup before saving; the file has not been changed", "{} 不是有效的 JSON。请修复或从备份恢复后再保存；原文件未改动", p.display())))?;
+    if !value.is_object() {
+        bail!("{}", tr!("{} must contain a JSON object. Repair it or restore a backup before saving; the file has not been changed", "{} 的顶层必须是 JSON 对象。请修复或从备份恢复后再保存；原文件未改动", p.display()));
+    }
+    Ok(value)
 }
 
+/// Compatibility for read-only views; mutations and important flows use `load_checked`.
 pub fn load() -> Value {
-    load_in(&agentplus_dir())
+    load_checked().unwrap_or_else(|_| json!({}))
 }
 
-fn load_in(dir: &Path) -> Value {
+/// Only a missing store is a new store. Existing unreadable or damaged data is an error.
+pub fn load_checked() -> Result<Value> {
+    load_checked_in(&agentplus_dir())
+}
+
+fn load_checked_in(dir: &Path) -> Result<Value> {
     let p = dir.join("store.json");
     // Another program may be halfway through writing it: give it a moment. A file that
     // has been broken for a while is not retried (the gateway loads this on every request).
     let fresh = || fs::metadata(&p).and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).is_some_and(|age| age < Duration::from_secs(2));
     for i in 0..3 {
-        if let Some(v) = read(&p) {
-            return v;
-        }
-        if i == 2 || !fresh() {
-            break;
+        match read(&p) {
+            Ok(v) => return Ok(v),
+            Err(e) if i == 2 || !fresh() => return Err(e),
+            Err(_) => {}
         }
         std::thread::sleep(Duration::from_millis(30));
     }
-    json!({})
+    unreachable!()
 }
 
 thread_local! {
@@ -84,7 +98,7 @@ pub fn save(v: &Value) -> anyhow::Result<()> {
 /// Load, change, save under the write lock (for callers outside the main thread).
 pub fn update<T>(f: impl FnOnce(&mut Value) -> anyhow::Result<T>) -> anyhow::Result<T> {
     let _g = lock();
-    let mut v = load();
+    let mut v = load_checked()?;
     let out = f(&mut v)?;
     write(&v)?;
     Ok(out)
@@ -95,13 +109,12 @@ fn write(v: &Value) -> anyhow::Result<()> {
 }
 
 fn write_in(dir: &Path, v: &Value) -> anyhow::Result<()> {
+    if !v.is_object() {
+        bail!("{}", crate::i18n::l("AgentPlus data must be a JSON object; nothing was saved", "AgentPlus 数据必须是 JSON 对象；未保存任何内容"));
+    }
+    load_checked_in(dir)?;
     crate::util::ensure_private_dir(dir)?;
     let path = dir.join("store.json");
-    // A file that exists but does not parse loaded as {}: keep it instead of overwriting it.
-    if path.exists() && read(&path).is_none() && fs::metadata(&path).map(|m| m.len() > 0).unwrap_or(false) {
-        let keep = dir.join(format!("store.broken-{}.json", chrono::Local::now().format("%Y%m%d-%H%M%S")));
-        crate::util::write_private_atomic(&keep, &fs::read(&path)?).with_context(|| tr!("Failed to back up unparsable {}", "备份无法解析的 {} 失败", path.display()))?;
-    }
     crate::util::write_private_atomic(&path, &serde_json::to_vec_pretty(v)?)
 }
 
@@ -177,17 +190,11 @@ pub fn set_value(root: &mut Value, agent: &str, key: &str, v: Value) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn tmp_dir(name: &str) -> std::path::PathBuf {
-        let d = std::env::temp_dir().join(format!("agentplus-store-{name}-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&d);
-        fs::create_dir_all(&d).unwrap();
-        d
-    }
+    use crate::util::TestHome;
 
     #[cfg(unix)]
     #[test]
-    fn store_and_broken_copies_are_private() {
+    fn valid_store_writes_are_private() {
         use std::os::unix::fs::PermissionsExt;
         let h = crate::util::TestHome::new("store-private");
         let d = h.0.join(".agentplus");
@@ -198,7 +205,6 @@ mod tests {
         assert_eq!(mode(&p), 0o600);
         fs::set_permissions(&d, fs::Permissions::from_mode(0o755)).unwrap();
         fs::set_permissions(&p, fs::Permissions::from_mode(0o644)).unwrap();
-        fs::write(&p, "{ broken secret").unwrap();
         write_in(&d, &json!({})).unwrap();
         assert_eq!(mode(&d), 0o700);
         for e in fs::read_dir(&d).unwrap().flatten() {
@@ -209,7 +215,8 @@ mod tests {
     /// Readers running while the store is rewritten over and over never see a partial file.
     #[test]
     fn readers_never_see_a_torn_file() {
-        let d = tmp_dir("torn");
+        let h = TestHome::new("store-torn");
+        let d = h.0.join(".agentplus");
         let big: Vec<String> = (0..2000).map(|i| format!("entry-{i}")).collect();
         write_in(&d, &json!({ "library": big, "n": 0 })).unwrap();
         let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -219,7 +226,7 @@ mod tests {
                 std::thread::spawn(move || {
                     let mut n = 0;
                     while !stop.load(std::sync::atomic::Ordering::SeqCst) {
-                        let v = load_in(&d);
+                        let v = load_checked_in(&d).unwrap();
                         assert_eq!(v["library"].as_array().map(|a| a.len()), Some(2000), "read a partial store");
                         n += 1;
                     }
@@ -234,37 +241,63 @@ mod tests {
         for r in readers {
             assert!(r.join().unwrap() > 0);
         }
-        assert_eq!(load_in(&d)["n"], 39);
+        assert_eq!(load_checked_in(&d).unwrap()["n"], 39);
         assert!(!fs::read_dir(&d).unwrap().any(|e| e.unwrap().file_name().to_string_lossy().ends_with(".tmp")), "temp file left behind");
-        let _ = fs::remove_dir_all(&d);
     }
 
-    /// A store that does not parse is kept aside before anything overwrites it.
+    /// A missing store can be created, but damaged data is never replaced with defaults.
     #[test]
-    fn broken_store_is_backed_up_before_overwrite() {
-        let d = tmp_dir("broken");
-        fs::write(d.join("store.json"), "{ \"library\": [ half written").unwrap();
-        assert_eq!(load_in(&d), json!({}));
-        write_in(&d, &json!({ "gateway": {} })).unwrap();
-        let kept: Vec<_> = fs::read_dir(&d).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().to_string()).filter(|n| n.starts_with("store.broken-")).collect();
-        assert_eq!(kept.len(), 1, "{kept:?}");
-        assert_eq!(fs::read_to_string(d.join(&kept[0])).unwrap(), "{ \"library\": [ half written");
-        assert_eq!(load_in(&d), json!({ "gateway": {} }));
-        let _ = fs::remove_dir_all(&d);
+    fn missing_store_can_be_created() {
+        let _h = TestHome::new("store-missing");
+        assert_eq!(load_checked().unwrap(), json!({}));
+        update(|root| { root["library"] = json!([]); Ok(()) }).unwrap();
+        assert_eq!(load_checked().unwrap(), json!({ "library": [] }));
+        assert!(save(&json!([])).is_err());
+        assert_eq!(load_checked().unwrap(), json!({ "library": [] }));
     }
 
-    /// A top level that parses but is not an object (a hand edit) loads as {} and is kept
-    /// aside too, instead of making `root["library"] = …` panic.
     #[test]
-    fn non_object_store_loads_empty() {
-        for (i, body) in ["[]", "1", "\"x\"", "null"].into_iter().enumerate() {
-            let d = tmp_dir(&format!("nonobj{i}"));
-            fs::write(d.join("store.json"), body).unwrap();
-            assert_eq!(load_in(&d), json!({}), "{body}");
-            write_in(&d, &json!({ "a": 1 })).unwrap();
-            assert!(fs::read_dir(&d).unwrap().any(|e| e.unwrap().file_name().to_string_lossy().starts_with("store.broken-")), "{body}");
-            assert_eq!(load_in(&d), json!({ "a": 1 }));
-            let _ = fs::remove_dir_all(&d);
+    fn damaged_store_blocks_all_mutations_and_stays_untouched() {
+        let _h = TestHome::new("store-damaged");
+        let dir = agentplus_dir();
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("store.json");
+        for body in ["", " \n", "{ \"library\": [ half written", "[]", "1", "\"x\"", "null"] {
+            fs::write(&path, body).unwrap();
+            assert!(load_checked().is_err(), "{body}");
+            assert_eq!(load(), json!({}), "read-only compatibility");
+            assert!(save(&json!({ "gateway": {} })).is_err(), "{body}");
+            let mut called = false;
+            assert!(update(|root| { called = true; root["a"] = json!(1); Ok(()) }).is_err(), "{body}");
+            assert!(!called, "a failed read must not run a mutation");
+            assert_eq!(fs::read_to_string(&path).unwrap(), body);
+            assert_eq!(fs::read_dir(&dir).unwrap().count(), 1, "no replacement or recovery files created");
         }
+    }
+
+    #[test]
+    fn unreadable_store_is_not_a_missing_store() {
+        let _h = TestHome::new("store-unreadable");
+        let path = agentplus_dir().join("store.json");
+        fs::create_dir_all(&path).unwrap();
+        fs::write(path.join("keep"), "untouched").unwrap();
+        assert!(load_checked().is_err());
+        assert!(save(&json!({})).is_err());
+        assert!(update(|_| Ok(())).is_err());
+        assert_eq!(fs::read_to_string(path.join("keep")).unwrap(), "untouched");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dangling_store_symlink_is_not_a_missing_store() {
+        let h = TestHome::new("store-dangling");
+        fs::create_dir_all(agentplus_dir()).unwrap();
+        let target = h.0.join("missing.json");
+        let path = agentplus_dir().join("store.json");
+        std::os::unix::fs::symlink(&target, &path).unwrap();
+        assert!(load_checked().is_err());
+        assert!(save(&json!({})).is_err());
+        assert!(fs::symlink_metadata(&path).unwrap().file_type().is_symlink());
+        assert!(!target.exists());
     }
 }

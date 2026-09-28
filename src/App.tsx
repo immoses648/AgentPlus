@@ -89,6 +89,7 @@ export default function App() {
   const runCancelled = useRef(false);
   const [toast, setToast] = useState<{ id: number; text: string; error?: boolean } | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [storeError, setStoreError] = useState<string | null>(null);
   const [dialog, setDialog] = useState<Dialog>(null);
   const [palette, setPalette] = useState(false);
   const [sessionQuery, setSessionQuery] = useState<string | undefined>(undefined);
@@ -208,7 +209,7 @@ export default function App() {
     return () => window.clearTimeout(timer);
   }, []);
 
-  const reload = () => api.listAgents().then(setAgents).catch((e) => setLoadError(errText(e)));
+  const reload = () => api.listAgents().then((next) => { setAgents(next); setLoadError(null); }).catch((e) => setLoadError(errText(e)));
   const reloadLib = () => api.libraryList().then(setLib).catch(() => undefined);
   const reloadEnvs = () => api.listEnvs().then(setEnvs).catch(() => undefined);
   const reloadProjects = () => api.projectsList().then(setProjects).catch(() => undefined);
@@ -220,7 +221,10 @@ export default function App() {
   };
   const reloadGateway = () => api.gatewayStatus().then(setGateway).catch(() => undefined);
   /** Everything read from the agents' config files (after a language switch, F5 or a rollback). */
-  const reloadConfigs = () => { reload(); reloadLib(); reloadProjects(); reloadProjStates(); };
+  const reloadConfigs = () => {
+    api.checkStore().then(() => setStoreError(null)).catch((e) => setStoreError(errText(e)));
+    reload(); reloadLib(); reloadProjects(); reloadProjStates();
+  };
   // Backend-rendered text follows the language too.
   useEffect(() => { reloadConfigs(); reloadEnvs(); }, [lang]);
 
@@ -1388,6 +1392,16 @@ export default function App() {
         <WindowControls />
         </div>
       </header>
+
+      {storeError && <section className="srow stacked" role="alert">
+        <strong>{t("app.storeRecoveryTitle")}</strong>
+        <span className="small">{scrub(storeError)}</span>
+        <span className="small">{t("app.storeRecoveryHint")}</span>
+        <div className="row gap6">
+          <button className="btn" onClick={() => attempt(api.openDataDir())}>{t("app.openDataDir")}</button>
+          <button className="btn" onClick={reloadConfigs}>{t("common.refresh")}</button>
+        </div>
+      </section>}
 
       <div className={`body${page === "settings" ? " solo" : page && !["providers", "history", ...(gateway?.running ? ["gateway"] : []), ...(SYNC_ENABLED ? ["sync"] : [])].includes(page) ? " wide" : ""}`}>
         {page !== "settings" && <Sidebar gateway={gateway} agents={listed} drafts={drafts} selected={page ? null : selected} page={page} onSelect={openAgent} onPage={setPage} />}

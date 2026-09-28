@@ -161,6 +161,8 @@ export interface AgentState {
   /** The model requests go out with, whichever provider is active (Codex, Gemini); null when unset or per provider. */
   currentModel: string | null;
   notes: string[];
+  /** A config read failed; separate from supported read-only configurations. */
+  error?: string | null;
   readonly: boolean;
   /** Codex: not on the fixed id yet, but could be. */
   fixedPending: boolean;
@@ -644,6 +646,7 @@ export type UpdateProgress =
 
 const real = {
   listAgents: () => invoke<AgentState[]>("list_agents"),
+  checkStore: () => invoke<void>("check_store"),
   getAgent: (agent: AgentId) => invoke<AgentState>("get_agent", { agent }),
   preview: (agent: AgentId, ops: Op[]) => invoke<DiffGroup[]>("preview", { agent, ops }),
   apply: (agent: AgentId, ops: Op[]) => invoke<ApplyResult>("apply", { agent, ops }),
@@ -876,6 +879,7 @@ async function demoProject(agent: string): Promise<AgentState> {
 
 const demo: typeof real = {
   listAgents: fixture,
+  checkStore: async () => undefined,
   getAgent: async (agent) => (isProjectId(agent) ? demoProject(agent) : (await fixture()).find((a) => a.id === agent)!),
   preview: async (_agent, ops) => [{ file: "（演示）", lines: ops.map((o) => ({ text: JSON.stringify(o), add: true })) }],
   apply: async (agent) => ({ state: isProjectId(agent) ? await demoProject(agent) : (await fixture()).find((a) => a.id === agent)!, files: [], backupDir: null }),

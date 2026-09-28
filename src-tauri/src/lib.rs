@@ -42,7 +42,15 @@ async fn blocking<T: Send + 'static>(f: impl FnOnce() -> anyhow::Result<T> + Sen
 
 /// `blocking` inside one store transaction (a load … save that must not interleave).
 async fn blocking_tx<T: Send + 'static>(f: impl FnOnce() -> anyhow::Result<T> + Send + 'static) -> Result<T, String> {
-    blocking(move || store::transaction(f)).await
+    blocking(move || store::transaction(|| {
+        store::load_checked()?;
+        f()
+    })).await
+}
+
+#[tauri::command]
+async fn check_store() -> Result<(), String> {
+    blocking(|| store::load_checked().map(|_| ())).await
 }
 
 /// A gateway change, then the gateway's new status for the page.
@@ -56,6 +64,7 @@ fn with_status(r: anyhow::Result<()>) -> Result<gateway::server::Status, String>
 #[tauri::command]
 async fn list_agents() -> Result<Vec<AgentState>, String> {
     blocking(|| {
+        store::load_checked()?;
         let t0 = std::time::Instant::now();
         let results: Vec<(&str, anyhow::Result<AgentState>, std::time::Duration)> = std::thread::scope(|s| {
             let jobs: Vec<_> = adapters::ALL
@@ -84,7 +93,10 @@ async fn list_agents() -> Result<Vec<AgentState>, String> {
 
 #[tauri::command]
 async fn get_agent(agent: String) -> Result<AgentState, String> {
-    blocking(move || adapters::state(&agent)).await
+    blocking(move || {
+        store::load_checked()?;
+        adapters::state(&agent)
+    }).await
 }
 
 #[tauri::command]
@@ -473,8 +485,8 @@ async fn codex_official_cancel() -> Result<(), String> {
 }
 
 #[tauri::command]
-fn library_list() -> Vec<library::LibEntry> {
-    library::list()
+async fn library_list() -> Result<Vec<library::LibEntry>, String> {
+    blocking(|| store::load_checked().map(|root| library::list_in(&root))).await
 }
 
 /// No outer transaction: save reads the adopted key from the agent first (which can wake
@@ -736,6 +748,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            check_store,
             list_agents,
             get_agent,
             preview,

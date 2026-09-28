@@ -200,6 +200,7 @@ pub fn restore(id: &str) -> Result<String> {
 }
 
 fn restore_in(id: &str) -> Result<String> {
+    crate::store::load_checked()?;
     let (stamp, agent, dir) = backup_dir(id)?;
     let entry = read_entry(stamp, &dir).ok_or_else(|| anyhow!(tr!("Backup not found: {id}", "找不到备份 {id}")))?;
     if !entry.restorable {

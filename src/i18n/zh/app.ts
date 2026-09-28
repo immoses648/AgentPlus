@@ -8,6 +8,8 @@ const zh: typeof en = {
   searchPlaceholder: "搜索服务商、模型、设置、会话",
   settings: "设置",
   loadingConfig: "正在读取配置…",
+  storeRecoveryTitle: "AgentPlus 数据需要处理",
+  storeRecoveryHint: "依赖这些数据的改动已被阻止。请先保留 store.json 的副本，再在数据目录中修复文件或恢复已确认正常的副本，然后刷新重试。Agent 配置备份不包含完整的供应商库。",
 
   // Toasts
   breakerPaused: "转发「{name}」连续出错，已暂停 {secs} 秒：{reason}",

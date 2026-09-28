@@ -60,10 +60,6 @@ fn to_entry(v: &Value) -> LibEntry {
     }
 }
 
-pub fn list() -> Vec<LibEntry> {
-    list_in(&store::load())
-}
-
 /// Library entries from an already loaded store.
 pub fn list_in(root: &Value) -> Vec<LibEntry> {
     entries(root).iter().map(to_entry).collect()

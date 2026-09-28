@@ -597,6 +597,7 @@ pub fn resolve(agent: &str, ops: &[Op]) -> Result<Vec<Op>> {
 
 /// `plan` for ops already passed through `resolve`.
 pub fn plan_resolved(agent: &str, ops: &[Op], dry_run: bool) -> Result<Plan> {
+    store::load_checked()?;
     // AgentPlus's own settings (auto-restart, desktop copy) are handled here; the adapters never see them.
     let (own, rest): (Vec<&Op>, Vec<&Op>) = ops.iter().partition(|o| matches!(o, Op::SetSetting { key, .. } if key == AUTO_RESTART_SETTING || key == DESKTOP_EXE_SETTING));
     // Entries pointing at the local gateway carry the placeholder (or, copied, another

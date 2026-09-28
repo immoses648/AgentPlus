@@ -46,7 +46,8 @@ pub fn set_folder(path: &str) -> Result<()> {
 }
 
 fn sync_path() -> Result<PathBuf> {
-    Ok(PathBuf::from(folder().ok_or_else(|| anyhow!(crate::i18n::l("Set a sync folder first", "先设置同步文件夹")))?).join(FILE))
+    let root = store::load_checked()?;
+    Ok(PathBuf::from(store::get_str(&root, SECTION, "folder").ok_or_else(|| anyhow!(crate::i18n::l("Set a sync folder first", "先设置同步文件夹")))?).join(FILE))
 }
 
 // ------------------------------------------------------------ password and options
@@ -60,7 +61,7 @@ fn password_in(root: &Value) -> Result<Option<String>> {
 }
 
 fn password() -> Result<Option<String>> {
-    password_in(&store::load())
+    password_in(&store::load_checked()?)
 }
 
 fn has_password_in(root: &Value) -> bool {
@@ -193,13 +194,16 @@ fn open_doc(doc: &Value, password: Option<&str>) -> Result<Value> {
     Ok(v)
 }
 
-fn read_payload() -> Result<Value> {
+fn read_doc() -> Result<Value> {
     let path = sync_path()?;
     if !path.exists() {
         bail!("{}", tr!("No {FILE} in the sync folder yet. Export from another device first", "同步文件夹里还没有 {FILE}，先在另一台设备导出"));
     }
-    let (doc, _) = read_json(&path)?;
-    open_doc(&doc, password()?.as_deref())
+    Ok(read_json(&path)?.0)
+}
+
+fn read_payload() -> Result<Value> {
+    open_doc(&read_doc()?, password()?.as_deref())
 }
 
 /// The content of one sync record.
@@ -207,7 +211,7 @@ fn read_snapshot(id: &str) -> Result<Value> {
     if !is_snapshot_name(id) {
         bail!("{}", tr!("Not a sync record: {id}", "不是同步记录：{id}"));
     }
-    let path = history_dir(Path::new(&folder().ok_or_else(|| anyhow!(crate::i18n::l("Set a sync folder first", "先设置同步文件夹")))?)).join(id);
+    let path = history_dir(sync_path()?.parent().unwrap()).join(id);
     let (doc, _) = read_json(&path)?;
     open_doc(&doc, password()?.as_deref())
 }
@@ -247,7 +251,7 @@ fn keep_key(keys: &mut Option<&mut Map<String, Value>>, key: Option<String>) -> 
     Some(fp)
 }
 
-fn export_agent(agent: &str, st: &AgentState, mut keys: Option<&mut Map<String, Value>>) -> Value {
+fn export_agent(agent: &str, st: &AgentState, mut keys: Option<&mut Map<String, Value>>) -> Result<Value> {
     let providers: Vec<Value> = st
         .providers
         .iter()
@@ -256,20 +260,23 @@ fn export_agent(agent: &str, st: &AgentState, mut keys: Option<&mut Map<String, 
             let models: Vec<Value> = p.models.iter().map(|m| json!({ "id": m.id, "name": m.name, "context": m.context, "visible": m.visible })).collect();
             let mut v = json!({ "name": p.name, "baseUrl": p.base_url, "api": p.api, "enabled": p.enabled, "models": models });
             if p.has_key && keys.is_some() {
-                let key = adapters::provider_endpoint(agent, &p.id).ok().and_then(|(_, k, _)| k);
+                let (_, key, _) = adapters::provider_endpoint(agent, &p.id).map_err(|e| anyhow!(tr!("Can't sync {agent}: {e}. Its provider credentials could not be read", "无法同步 {agent}：{e}。无法读取其供应商凭据")))?;
+                if key.as_deref().is_none_or(|k| k.trim().is_empty()) {
+                    bail!("{}", tr!("Can't sync {agent}: the credentials for provider {} could not be read", "无法同步 {agent}：无法读取供应商 {} 的凭据", p.name));
+                }
                 if let Some(fp) = keep_key(&mut keys, key) {
                     v["keyFp"] = json!(fp);
                 }
             }
-            v
+            Ok(v)
         })
-        .collect();
+        .collect::<Result<_>>()?;
     let catalog: Vec<Value> = st
         .catalog
         .as_ref()
         .map(|c| c.iter().filter(|m| m.deletable).map(|m| json!({ "id": m.id, "name": m.name, "context": m.context })).collect())
         .unwrap_or_default();
-    json!({ "providers": providers, "customModels": catalog })
+    Ok(json!({ "providers": providers, "customModels": catalog }))
 }
 
 fn export_library(root: &Value, mut keys: Option<&mut Map<String, Value>>) -> Vec<Value> {
@@ -302,23 +309,37 @@ struct Built {
     keys: usize,
 }
 
-fn build(root: &Value) -> Built {
+fn checked_agent(agent: &str) -> Result<AgentState> {
+    let st = adapters::state(agent).map_err(|e| anyhow!(tr!("Can't sync {agent}: {e}. Fix its configuration before syncing", "无法同步 {agent}：{e}。请修复其配置后再同步")))?;
+    if let Some(error) = &st.error {
+        // Some adapters require a config even before first use. An absent configuration
+        // is empty; an unreadable path or a dangling link must still stop the sync.
+        let absent = !st.files.is_empty() && st.files.iter().all(|file| {
+            std::fs::symlink_metadata(crate::env::resolve_path(file)).is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound)
+        });
+        if !absent {
+            bail!("{}", tr!("Can't sync {agent}: {error}. Fix its configuration before syncing", "无法同步 {agent}：{error}。请修复其配置后再同步"));
+        }
+    }
+    Ok(st)
+}
+
+fn build(root: &Value) -> Result<Built> {
     let with_keys = include_keys_in(root);
     let mut keys = Map::new();
     let mut agents = Map::new();
     let mut providers = 0;
     for a in adapters::ALL {
-        if let Ok(st) = adapters::state(a) {
-            let v = export_agent(a, &st, with_keys.then_some(&mut keys));
-            providers += v["providers"].as_array().map(|x| x.len()).unwrap_or(0);
-            agents.insert(a.to_string(), v);
-        }
+        let st = checked_agent(a)?;
+        let v = export_agent(a, &st, with_keys.then_some(&mut keys))?;
+        providers += v["providers"].as_array().map(|x| x.len()).unwrap_or(0);
+        agents.insert(a.to_string(), v);
     }
     let lib = export_library(root, with_keys.then_some(&mut keys));
     let (library, n_keys) = (lib.len(), keys.len());
     let payload = json!({ "agents": agents, "library": lib, "keys": keys });
     let hash = hex(ring::digest::digest(&ring::digest::SHA256, &serde_json::to_vec(&payload).unwrap_or_default()).as_ref());
-    Built { payload, hash, providers, library, keys: n_keys }
+    Ok(Built { payload, hash, providers, library, keys: n_keys })
 }
 
 fn hex(b: &[u8]) -> String {
@@ -330,8 +351,8 @@ static RUN: Mutex<()> = Mutex::new(());
 
 pub fn export() -> Result<String> {
     let _g = crate::util::lock(&RUN);
-    let root = store::load();
-    export_built(&root, build(&root))
+    let root = store::load_checked()?;
+    export_built(&root, build(&root)?)
 }
 
 fn export_built(root: &Value, b: Built) -> Result<String> {
@@ -524,15 +545,15 @@ fn remote_pending(root: &Value, doc: &Value) -> bool {
     }
 }
 
-/// Marks the current sync file as seen (after comparing it).
-fn ack_current() {
-    let Ok(path) = sync_path() else { return };
-    if let Some(at) = read_json(&path).ok().and_then(|(v, _)| v["exportedAt"].as_str().map(String::from)) {
-        let _ = store::update(|s| {
-            store::set_str(s, SECTION, "lastAck", &at);
+/// Acknowledge only the export that was successfully compared, never a later replacement.
+fn ack_export(exported_at: Option<&str>) -> Result<()> {
+    if let Some(at) = exported_at {
+        store::update(|s| {
+            store::set_str(s, SECTION, "lastAck", at);
             Ok(())
-        });
+        })?;
     }
+    Ok(())
 }
 
 #[derive(Serialize, Clone, Copy, Debug, PartialEq)]
@@ -559,7 +580,11 @@ pub struct AutoResult {
 /// `trigger`: "start" or "change".
 pub fn auto(trigger: &str) -> AutoResult {
     let _g = crate::util::lock(&RUN);
-    let root = store::load();
+    let fail = |e: anyhow::Error| AutoResult { outcome: Outcome::Failed, message: Some(tr!("Automatic sync failed: {e}", "自动同步失败：{e}")) };
+    let root = match store::load_checked() {
+        Ok(root) => root,
+        Err(e) => return fail(e),
+    };
     let o = options_in(&root);
     let on = match trigger {
         "start" => o.on_start,
@@ -569,7 +594,6 @@ pub fn auto(trigger: &str) -> AutoResult {
     let Some(f) = store::get_str(&root, SECTION, "folder").filter(|_| on) else {
         return AutoResult { outcome: Outcome::Off, message: None };
     };
-    let fail = |e: anyhow::Error| AutoResult { outcome: Outcome::Failed, message: Some(tr!("Automatic sync failed: {e}", "自动同步失败：{e}")) };
     let path = Path::new(&f).join(FILE);
     let doc = match path.exists().then(|| read_json(&path).map(|(v, _)| v)).transpose() {
         Ok(d) => d,
@@ -582,7 +606,10 @@ pub fn auto(trigger: &str) -> AutoResult {
             message: Some(tr!("{from} synced new changes. Compare and import them on the sync page before this device syncs", "{from} 同步了新的内容。请先在同步页对比导入，本机才会继续自动同步")),
         };
     }
-    let b = build(&root);
+    let b = match build(&root) {
+        Ok(b) => b,
+        Err(e) => return fail(e),
+    };
     if doc.is_some() && store::get_str(&root, SECTION, "lastHash").as_deref() == Some(b.hash.as_str()) {
         return AutoResult { outcome: Outcome::Unchanged, message: None };
     }
@@ -826,19 +853,22 @@ fn agent_suggestions(a: &str, remote: &Value, local: &AgentState, keys: &Value) 
 
 /// Compares the sync file (or a sync record) with this machine and proposes additions.
 pub fn preview_import(snapshot: Option<&str>) -> Result<Vec<Suggestion>> {
+    let _g = crate::util::lock(&RUN);
+    let root = store::load_checked()?;
+    let doc = if snapshot.is_none() { Some(read_doc()?) } else { None };
     let payload = match snapshot {
         Some(id) => read_snapshot(id)?,
-        None => read_payload()?,
+        None => open_doc(doc.as_ref().unwrap(), password_in(&root)?.as_deref())?,
     };
-    if snapshot.is_none() {
-        ack_current();
-    }
     let keys = &payload["keys"];
-    let mut out = library_suggestions(payload["library"].as_array().map(Vec::as_slice).unwrap_or_default(), &library::list(), keys);
+    let mut out = library_suggestions(payload["library"].as_array().map(Vec::as_slice).unwrap_or_default(), &library::list_in(&root), keys);
     for a in adapters::ALL {
         let Some(remote) = payload["agents"].get(a) else { continue };
-        let Ok(local) = adapters::state(a) else { continue };
+        let local = checked_agent(a)?;
         out.extend(agent_suggestions(a, remote, &local, keys));
+    }
+    if let Some(doc) = doc {
+        ack_export(doc["exportedAt"].as_str())?;
     }
     Ok(out)
 }
@@ -1168,7 +1198,7 @@ mod tests {
         assert!(r.message.unwrap().contains("OTHER-PC"));
         assert_eq!(auto("nonsense").outcome, Outcome::Off);
         // Comparing it counts as seen; a later export from there is pending again.
-        ack_current();
+        ack_export(Some("2026-09-27T10:00:00+08:00")).unwrap();
         assert!(!status().remote_pending);
         other("2026-09-27T11:00:00+08:00");
         assert!(status().remote_pending);
@@ -1190,5 +1220,83 @@ mod tests {
         assert!(dir.join(FILE).exists());
         assert_eq!(key(&key_fingerprint("sk-relay")).unwrap(), "sk-relay");
         assert!(key(&key_fingerprint("sk-none")).is_err());
+    }
+
+    #[test]
+    fn missing_agent_configs_can_be_exported() {
+        let h = TestHome::new("sync-missing-configs");
+        let dir = share(&h);
+        export().unwrap();
+        let doc = read_json(&dir.join(FILE)).unwrap().0;
+        assert!(doc["agents"]["codex"]["providers"].as_array().unwrap().is_empty());
+        assert!(preview_import(None).unwrap().is_empty());
+    }
+
+    #[test]
+    fn broken_agent_config_preserves_sync_file_and_acknowledgement() {
+        let h = TestHome::new("sync-broken-agent");
+        let dir = share(&h);
+        set_options(SyncOptions { on_start: true, on_change: true, keep: 5 }).unwrap();
+        let path = dir.join(FILE);
+        let doc = seal_doc(&payload(), None, "2026-09-27T10:00:00+08:00", &machine()).unwrap();
+        std::fs::write(&path, doc.to_string()).unwrap();
+        store::update(|root| {
+            store::set_str(root, SECTION, "lastAck", "2026-09-26T10:00:00+08:00");
+            store::set_str(root, SECTION, "lastHash", "previous-hash");
+            Ok(())
+        }).unwrap();
+        let original_store = std::fs::read(agentplus_dir().join("store.json")).unwrap();
+        let original_sync = std::fs::read(&path).unwrap();
+        let config = h.0.join(".codex").join("config.toml");
+        std::fs::create_dir_all(config.parent().unwrap()).unwrap();
+        std::fs::write(&config, "model_providers = [broken").unwrap();
+
+        assert!(export().unwrap_err().to_string().contains("codex"));
+        for trigger in ["start", "change"] {
+            let result = auto(trigger);
+            assert_eq!(result.outcome, Outcome::Failed);
+            assert!(result.message.unwrap().contains("codex"));
+        }
+        assert!(preview_import(None).err().expect("broken agent must block comparison").to_string().contains("codex"));
+        assert_eq!(std::fs::read(&path).unwrap(), original_sync);
+        assert_eq!(std::fs::read(agentplus_dir().join("store.json")).unwrap(), original_store);
+        assert!(!history_dir(&dir).exists(), "failed exports must not create history");
+
+        std::fs::write(&config, "").unwrap();
+        preview_import(None).unwrap();
+        assert_eq!(store::get_str(&store::load_checked().unwrap(), SECTION, "lastAck"), doc["exportedAt"].as_str().map(String::from));
+    }
+
+    #[test]
+    fn damaged_store_blocks_sync_without_touching_its_files() {
+        let h = TestHome::new("sync-broken-store");
+        let dir = share(&h);
+        export_built(&store::load_checked().unwrap(), built(payload(), "original")).unwrap();
+        let original_sync = std::fs::read(dir.join(FILE)).unwrap();
+        let original_records = snapshots(&history_dir(&dir));
+        let path = agentplus_dir().join("store.json");
+        for body in ["", "{ broken", "[]"] {
+            std::fs::write(&path, body).unwrap();
+            assert!(export().is_err());
+            assert_eq!(auto("start").outcome, Outcome::Failed);
+            assert_eq!(auto("change").outcome, Outcome::Failed);
+            assert!(preview_import(None).is_err());
+            assert!(preview_import(Some(&original_records[0])).is_err());
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), body);
+            assert_eq!(std::fs::read(dir.join(FILE)).unwrap(), original_sync);
+            assert_eq!(snapshots(&history_dir(&dir)), original_records);
+        }
+    }
+
+    #[test]
+    fn acknowledgement_cannot_skip_an_uncompared_replacement() {
+        let h = TestHome::new("sync-ack-replacement");
+        let dir = share(&h);
+        let compared = "2026-09-27T10:00:00+08:00";
+        let newer = seal_doc(&payload(), None, "2026-09-27T11:00:00+08:00", "OTHER-PC").unwrap();
+        std::fs::write(dir.join(FILE), newer.to_string()).unwrap();
+        ack_export(Some(compared)).unwrap();
+        assert_eq!(store::get_str(&store::load_checked().unwrap(), SECTION, "lastAck").as_deref(), Some(compared));
+        assert!(status().remote_pending);
     }
 }

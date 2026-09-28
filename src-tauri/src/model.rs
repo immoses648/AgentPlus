@@ -26,6 +26,9 @@ pub struct AgentState {
     /// None when unset or when the model belongs to one provider (e.g. Gemini's profiles).
     pub current_model: Option<String>,
     pub notes: Vec<String>,
+    /// A config read failed; distinct from a readable, intentionally read-only config.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
     pub readonly: bool,
     /// Codex only: not on the fixed id yet, but could be (a custom provider is active).
     pub fixed_pending: bool,
@@ -107,7 +110,9 @@ pub struct Provider {
 impl AgentState {
     /// The config can't be read: say why and show the agent read-only.
     pub fn fail(&mut self, e: impl std::fmt::Display) {
-        self.notes.push(e.to_string());
+        let message = e.to_string();
+        self.notes.push(message.clone());
+        self.error = Some(message);
         self.readonly = true;
     }
 }
