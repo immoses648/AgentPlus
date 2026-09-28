@@ -54,7 +54,7 @@ const zh: typeof en = {
 
   dataTitle: "数据与备份",
   dataDir: "AgentPlus 数据目录",
-  dataDirHint: "~/.agentplus · 供应商库、各 Agent 的开关、写入前的备份",
+  dataDirHint: "~/.agentplus · 供应商库、各 Agent 的开关与配置备份。密钥可能以明文保存；隐私模式只遮挡界面。",
   backups: "备份与回滚",
   linksTitle: "导入链接",
   ccswitchLinks: "打开 CC Switch 导入链接",

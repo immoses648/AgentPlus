@@ -156,13 +156,13 @@ export function ServiceDialog({ agents, group, prefill, imported, onSave, onClos
 
   const foot = (
     <>
-      <span className="muted tiny grow hint">{t("serviceDialog.footNote")}</span>
-      <button className="btn" onClick={onClose}>{t("common.cancel")}</button>
+      <span className="muted tiny grow">{t("serviceDialog.footNote")}</span>
+      <button className="btn" disabled={saving} onClick={onClose}>{t("common.cancel")}</button>
       <button className="btn primary" disabled={!canSave} onClick={save}>{saving ? t("common.saving") : isNew ? t("common.add") : t("common.save")}</button>
     </>
   );
   return (
-    <Modal label={isNew ? t("common.addProvider") : t("common.editProvider")} wide onClose={onClose}
+    <Modal label={isNew ? t("common.addProvider") : t("common.editProvider")} wide busy={saving} onClose={onClose}
       title={isNew ? (prefill ? t("serviceDialog.addGroupTo", { station: prefill.station }) : t("common.addProvider")) : t("serviceDialog.editGroup", { name: group!.name })} foot={foot}>
       {imported && <ImportNote req={imported} />}
       {isNew && !prefill && !imported && <TemplatePicker value={tpl} onPick={pickTpl} />}
@@ -185,7 +185,7 @@ export function ServiceDialog({ agents, group, prefill, imported, onSave, onClos
               const missing = !!tpl && !tpl.endpoints[v];
               return { value: v, label: API_LABEL[v], disabled: missing, title: missing ? t("serviceDialog.protoMissing", { vendor: tpl!.vendor, api: API_LABEL[v] }) : t(API_HINT[v]) };
             })} />
-          <em className={`muted tiny${tpl ? "" : " hint"}`}>
+          <em className="muted tiny">
             {tpl
               ? t("serviceDialog.tplProtocols", { list: (Object.keys(tpl.endpoints) as ApiKind[]).map((k) => API_LABEL[k]).join(" / ") })
               : t("serviceDialog.groupHint")}

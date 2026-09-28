@@ -15,6 +15,7 @@ const zh: typeof en = {
   forwardAdded: "已添加转发：{base}",
   // header / hero
   title: "本地网关",
+  writeBoundary: "网关启停、转发和已保存的运行设置立即生效。Agent 地址改动保留为待写入，检查并应用后才会写入。更新 Agent 网关密钥会单独确认，并立即写入。",
   intro: "在本机转发供应商请求：客户端用 Chat Completions、Responses、Anthropic Messages 任一协议访问，网关自动转换成供应商支持的协议（包括流式输出和工具调用）。",
   online: "网关在线",
   notRunning: "网关未运行",

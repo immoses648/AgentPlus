@@ -52,7 +52,7 @@ export default {
 
   dataTitle: "Data & backups",
   dataDir: "AgentPlus data folder",
-  dataDirHint: "~/.agentplus · provider library, per-agent switches, backups taken before each write",
+  dataDirHint: "~/.agentplus · provider library, per-agent switches and configuration backups. Keys can be stored in plain text; privacy mode only masks the screen.",
   backups: "Backups & rollback",
   linksTitle: "Import links",
   ccswitchLinks: "Open CC Switch import links",

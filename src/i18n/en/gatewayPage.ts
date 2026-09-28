@@ -13,6 +13,7 @@ export default {
   forwardAdded: "Route added: {base}",
   // header / hero
   title: "Local gateway",
+  writeBoundary: "Gateway start, stop, route and saved runtime settings take effect immediately. Changes to agent addresses stay pending until you review and apply them. Updating agent gateway keys has its own confirmation and writes them immediately.",
   intro: "Forwards provider requests on this machine: clients can call it with Chat Completions, Responses or Anthropic Messages, and the gateway converts to the protocol the provider supports (including streaming and tool calls).",
   online: "Gateway online",
   notRunning: "Gateway not running",

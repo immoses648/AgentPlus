@@ -117,6 +117,7 @@ export function GatewayPage({ status: s, setStatus, agents, stations, gatewayHos
       </div>
 
       <div className="page-body">
+        <p className="muted small">{t("gatewayPage.writeBoundary")}</p>
         <div className="settings full">
           <section className={`gw-hero${s?.running ? " on" : s?.enabled ? " bad" : ""}`}>
             <div className="gw-hero-main">

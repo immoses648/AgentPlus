@@ -10,6 +10,7 @@ const zh: typeof en = {
   detected: "已检测 · {version}",
   running: " · 运行中",
   notInstalled: "未检测到安装",
+  writeBoundary: "「待写入的改动」中列出的是草稿。检查文件改动后点击「应用」才会写入，原文件会先备份。",
   restarting: "正在重启…",
   starting: "正在启动…",
   singleNote: "{name} 同一时间只用一个供应商。",

@@ -8,6 +8,7 @@ export default {
   detected: "Detected · {version}",
   running: " · Running",
   notInstalled: "Not installed",
+  writeBoundary: "Edits listed under Pending changes are drafts. Review the file changes, then click Apply to write them; originals are backed up first.",
   restarting: "Restarting…",
   starting: "Starting…",
   singleNote: "{name} uses one provider at a time.",

@@ -112,6 +112,7 @@ export function AgentPage(props: Props) {
       </div>
 
       <div {...tabPanelProps(tabId, tab)} className={`page-body slide-${slide}`} key={tab}>
+        {(tab === "prov" || tab === "models" || tab === "set") && <p className="muted small">{t("agentPage.writeBoundary")}</p>}
         {tab === "prov" && (
           <div className="stack12">
             <div className="row between">
