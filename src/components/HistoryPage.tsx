@@ -63,6 +63,8 @@ export function HistoryPage({ flash, onChanged }: { flash: Flash; onChanged: () 
       await reload();
       flash(t("historyPage.deleted"));
     } catch (e) {
+      await reload();
+      setRev((n) => n + 1);
       flash(errText(e), true);
     } finally {
       setBusy(false);

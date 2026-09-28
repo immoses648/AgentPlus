@@ -129,9 +129,16 @@ fn read_entry(stamp: &str, agent_dir: &Path) -> Option<BackupEntry> {
             l(en, zh).into()
         });
     let missing: Vec<&str> = files.iter().filter(|f| f.profile_scope.is_none() && f.path.as_ref().is_some_and(|p| !Path::new(p).is_file())).map(|f| f.name.as_str()).collect();
+    let incomplete: Vec<&str> = manifest.as_ref().and_then(|m| m["files"].as_array()).into_iter().flatten().filter_map(|f| {
+        let name = f["name"].as_str().unwrap_or(l("Unnamed backup file", "未命名的备份文件"));
+        let present = plain_name(name) && fs::symlink_metadata(agent_dir.join(name)).is_ok_and(|m| m.is_file() && !linked(&m));
+        (!present).then_some(name)
+    }).collect();
     let mut blocked_missing = false;
     let blocked = if agent.starts_with("codex-") {
         Some(l("Database backup: undo it on the Sessions page or handle it manually", "数据库类备份，请在「会话」页撤销或手动处理").to_string())
+    } else if !incomplete.is_empty() {
+        Some(tr!("Incomplete backup: required files are missing or unsafe: {}. It cannot be restored", "备份不完整：必需文件缺失或不安全：{}。无法恢复", crate::i18n::join(&incomplete)))
     } else if PROFILE_AGENTS.contains(&agent.as_str()) && !files.iter().any(|f| f.profile_scope.is_some()) {
         let name = crate::adapters::display_name(&agent);
         Some(tr!("The backup has no {name} profiles. Restore it manually and check the config", "备份缺少 {name} 配置档，请手动恢复并核对配置"))
@@ -251,7 +258,7 @@ fn deletion_files(id: &str) -> Result<(PathBuf, Vec<PathBuf>)> {
         return Err(invalid());
     }
     // Keep the manifest until last, so an interrupted deletion still has its identity.
-    files.sort_by_key(|path| path.file_name().is_some_and(|name| name == "manifest.json"));
+    files.sort_by_key(|path| (path.file_name().is_some_and(|name| name == "manifest.json"), path.clone()));
     Ok((dir, files))
 }
 
@@ -260,9 +267,9 @@ pub fn delete(id: &str) -> Result<()> {
         crate::store::load_checked()?;
         let (dir, files) = deletion_files(id)?;
         for path in files {
-            fs::remove_file(&path).with_context(|| tr!("Couldn't delete file in backup {id}", "无法删除备份 {id} 中的文件"))?;
+            fs::remove_file(&path).with_context(|| tr!("Couldn't finish deleting backup {id}. Some files may already be deleted; close programs using the backup, check permissions and retry", "未能完成删除备份 {id}。部分文件可能已经删除；请关闭占用备份的程序、检查权限后重试"))?;
         }
-        fs::remove_dir(&dir).with_context(|| tr!("Couldn't delete backup {id}", "无法删除备份 {id}"))
+        fs::remove_dir(&dir).with_context(|| tr!("Backup {id}'s files were deleted, but its folder could not be removed. Check the folder and permissions before removing it manually", "备份 {id} 的文件已删除，但未能移除目录。请检查目录内容和权限后手动移除"))
     })
 }
 
@@ -647,6 +654,74 @@ mod tests {
         assert_eq!(fs::read_to_string(dir.join("config.toml")).unwrap(), "keep");
     }
 
+    #[test]
+    fn incomplete_backups_cannot_restore_but_can_be_explicitly_deleted() {
+        let h = TestHome::new("history-incomplete");
+        let config = h.0.join("config.toml");
+        let models = h.0.join("models.json");
+        fs::write(&config, "old config").unwrap();
+        fs::write(&models, "old models").unwrap();
+        let dir = backup("codex", &[config.clone(), models.clone()]).unwrap();
+        fs::remove_file(dir.join("models.json")).unwrap();
+        fs::write(&config, "current config").unwrap();
+        fs::write(&models, "current models").unwrap();
+        let id = id_of(&dir);
+        let entry = list().unwrap().into_iter().find(|e| e.id == id).unwrap();
+        assert!(!entry.restorable && entry.deletable && !entry.blocked_missing);
+        assert!(entry.blocked.unwrap().contains("models.json"));
+        assert!(restore(&id).is_err());
+        assert_eq!(fs::read_to_string(&config).unwrap(), "current config");
+        assert_eq!(fs::read_to_string(&models).unwrap(), "current models");
+        delete(&id).unwrap();
+        assert!(!dir.exists());
+
+        let profiles = serde_json::json!({"claude":{"profiles":{"demo":{"model":"old"}}}});
+        crate::store::save(&profiles).unwrap();
+        let dir = backup("claude", std::slice::from_ref(&config)).unwrap();
+        backup_profiles(&dir, "claude", &profiles).unwrap();
+        fs::remove_file(dir.join("agentplus-profiles.json")).unwrap();
+        fs::write(&config, "keep live config").unwrap();
+        let id = id_of(&dir);
+        let entry = list().unwrap().into_iter().find(|e| e.id == id).unwrap();
+        assert!(!entry.restorable && entry.deletable);
+        assert!(entry.blocked.unwrap().contains("agentplus-profiles.json"));
+        assert!(restore(&id).is_err());
+        assert_eq!(fs::read_to_string(&config).unwrap(), "keep live config");
+        assert_eq!(crate::store::load_checked().unwrap(), profiles);
+        delete(&id).unwrap();
+        assert!(!dir.exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn interrupted_deletion_blocks_restore_and_can_be_retried() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let h = TestHome::new("history-delete-locked");
+        let first = h.0.join("a.toml");
+        let last = h.0.join("z.toml");
+        fs::write(&first, "old first").unwrap();
+        fs::write(&last, "old last").unwrap();
+        let dir = backup("codex", &[first.clone(), last.clone()]).unwrap();
+        fs::write(&first, "live first").unwrap();
+        fs::write(&last, "live last").unwrap();
+        let id = id_of(&dir);
+        // Allow reads and writes, but deny FILE_SHARE_DELETE until the handle is closed.
+        let locked = fs::OpenOptions::new().read(true).share_mode(3).open(dir.join("z.toml")).unwrap();
+        let error = delete(&id).unwrap_err().to_string();
+        assert!(error.contains("部分文件可能已经删除") && error.contains("重试"));
+        assert!(!dir.join("a.toml").exists());
+        assert!(dir.join("z.toml").exists() && dir.join("manifest.json").exists());
+        let entry = list().unwrap().into_iter().find(|e| e.id == id).unwrap();
+        assert!(!entry.restorable && entry.deletable);
+        assert!(entry.blocked.unwrap().contains("a.toml"));
+        assert!(restore(&id).is_err());
+        assert_eq!(fs::read_to_string(&first).unwrap(), "live first");
+        assert_eq!(fs::read_to_string(&last).unwrap(), "live last");
+        drop(locked);
+        delete(&id).unwrap();
+        assert!(!dir.exists());
+    }
+
     #[cfg(unix)]
     #[test]
     fn deleting_backup_refuses_symlinks_at_every_boundary() {
@@ -804,7 +879,8 @@ mod tests {
 
         fs::remove_file(dir.join("gone.toml")).unwrap();
         let e = read_entry("x", &dir).unwrap();
-        assert!(e.restorable && e.blocked.is_none());
+        assert!(!e.restorable && !e.blocked_missing);
+        assert!(e.blocked.is_some_and(|b| b.contains("备份不完整") && b.contains("gone.toml")));
         let _ = fs::remove_dir_all(dir.parent().unwrap());
     }
 
