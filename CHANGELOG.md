@@ -2,6 +2,35 @@
 
 Each version gets one section headed `## <version>`. On release, the text of that section becomes the GitHub release notes and is shown in AgentPlus's in-app update prompt, so it is written in both English and Chinese.
 
+## Unreleased
+
+### Added / 新增
+
+- Delete an individual ordinary configuration backup from History & rollback after explicit confirmation. Recovery-specific backups, invalid manifests and unsafe paths are protected; backups do not expire automatically.
+- Add a table of per-minute gateway values so traffic data is available without hovering over the chart.
+- 可在「历史与回滚」中明确确认后永久删除单份普通配置备份；特殊恢复资料、无效清单及不安全路径受到保护，备份不会自动到期。
+- 网关新增逐分钟数值表，无需悬停图表也能读取流量数据。
+
+### Fixed / 修复
+
+- Block writes when the existing local store is empty, damaged, unreadable or not an object; show recovery guidance instead of silently treating it as a new library.
+- Stop sync export and comparison when an agent's configuration or required credentials cannot be read, preserving the current shared snapshot and leaving it unacknowledged until comparison succeeds.
+- Require a ready, successful diff preview before applying agent changes, including context-menu and apply-before-restart actions. Unselected changes stay pending, and failed changes remain available to retry.
+- Prevent restoration of incomplete backups, including copies left by an interrupted deletion; explain how to release locked files and retry deletion safely.
+- Keep keyboard focus inside modal dialogs and return it when they close; support arrow-key navigation in tabs and radio groups, improve contrast, and respect the system's reduced-motion preference for decorative effects while retaining the Excessive option.
+- 本地数据文件为空、损坏、无法读取或顶层不是对象时阻止写入并显示恢复说明，不再静默当作新供应商库。
+- Agent 配置或必要凭据无法读取时停止同步导出与比较，保留现有共享快照，成功比较前不提前确认它已被处理。
+- 应用 Agent 修改前必须完成 diff 预览，右键应用和重启前应用也需检查并确认；未选修改保留待应用，失败修改保留以便重试。
+- 禁止恢复不完整的备份，包括删除中断后留下的副本；说明如何解除文件占用并安全重试删除。
+- 对话框内约束键盘焦点并在关闭后归还；选项卡与单选组支持方向键，改善对比度，装饰动画遵循系统减少动态效果偏好，同时保留「过度」选项。
+
+### Changed / 变更
+
+- Clarify which changes save immediately and which remain agent drafts, and document current platform support, data storage, external requests, recovery and experimental Codex UI patches.
+- Require frontend and Windows/macOS backend checks on the tagged commit before creating a draft release or building release artifacts.
+- 明确立即保存与 Agent 草稿的范围，补充当前平台支持、数据存储、外部请求、恢复方式及实验性 Codex 界面补丁的说明。
+- 创建发布草稿和构建发布产物前，先对标签对应的提交执行前端与 Windows/macOS 后端检查。
+
 ## 0.2.4
 
 可以用中转站的「导入到 CC Switch」按钮添加供应商了。

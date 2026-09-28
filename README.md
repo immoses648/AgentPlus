@@ -21,12 +21,42 @@ English | [简体中文](README.zh-CN.md)
   <img src="docs/images/codex-en.png" alt="AgentPlus main window">
 </picture>
 
+## Status and scope
+
+**Active, pre-1.0.** AgentPlus is an independently maintained desktop configuration tool.
+Plystra is a sponsor; AgentPlus keeps its own product identity, repository and license.
+Windows 10/11 x64 is the primary platform. macOS 11+ on Apple silicon and Intel is
+experimental; Linux packages are not supported. WSL support manages agent configuration
+inside a distribution from the Windows app. The desktop interface requires a window of
+at least 1100 x 700; mobile browsers are not a supported product surface.
+
+AgentPlus is for people using their own coding agents and API providers. It does not host
+models, provide API credits, replace the agents, or run a hosted account/sync service.
+Protocol conversion cannot add capabilities, permissions or quota an upstream provider
+does not offer. Support for an agent may need adjustment after that agent changes its
+configuration or interface.
+
+## Typical workflow
+
+1. Add or import a provider in **Providers**, then choose the agents that should use it.
+2. Choose models and edit the selected agent's **Pending changes**.
+3. Review the diff and apply those agent changes. Changed configuration files are backed up.
+4. Test the connection, restart the agent if it requires it, and use **History & rollback** to inspect
+   or restore a supported backup when needed.
+
+The write boundary matters: **saving the provider library writes immediately**. Adding
+that provider to an agent queues a draft until you apply it. **Gateway settings and
+forwarding changes take effect immediately**, including gateway resources created while
+preparing an agent draft. Discarding a draft does not undo those library or gateway changes.
+Sync imports follow the same split: library changes save immediately; agent changes become
+drafts. See [data, network access and recovery](docs/data-and-network.md).
+
 ## Features
 
 - **Provider library.** Put an API URL and key in once and every agent can use it. There are 21 templates for common providers and coding plans; most need nothing from you but a key.
 - **Import links.** A relay's "Import to CC Switch" button (Sub2API, New API…) can fill in the add-provider dialog: paste its link under Providers → Import link, or let AgentPlus open `ccswitch://` links (Settings, Windows). See [Import links](#import-links).
 - **Model lists.** Fetch what a provider offers, then choose what each agent shows.
-- **Change preview.** Nothing is written until you've looked at the diff, and whatever gets replaced is saved to `~/.agentplus/backups/` first.
+- **Agent change preview.** Review pending agent changes before applying them; replaced configuration files are backed up under `~/.agentplus/backups/`.
 - **Local gateway.** Converts between OpenAI Chat, OpenAI Responses and Anthropic Messages, streaming and tool calls included — which is how Claude Code can use a provider that only speaks OpenAI.
 - **Connection tests.** Latency, plus a real request, so you know the URL, key and model work before you switch.
 - **WSL.** Agents inside a WSL distro share the same provider library as Windows.
@@ -101,7 +131,7 @@ Only the agents it finds show up in the app. If yours is installed somewhere unu
 - Browse sessions and see why one is hidden. Move a session to another provider (undoable), or copy its `codex resume` command.
 - Checks the database, missing files and oversized logs, and backs up before cleaning up.
 - Import the official model catalog once you've signed in with ChatGPT.
-- Optional UI patches: Fast mode, full model names and a couple of others.
+- Experimental, unofficial desktop UI patches: Fast visibility, model names and usage-related UI. These depend on Codex internals; see [scope and how to turn them off](docs/architecture.md#experimental-codex-ui-patches).
 
 </details>
 
@@ -158,16 +188,17 @@ agentplus://v1/import?resource=provider&app=claude&name=My%20Relay&endpoint=http
 - `name`, `endpoint` (the first of a comma-separated list), `apiKey`, `homepage`, and `model` / `sonnetModel` / `opusModel` / `haikuModel` for the model list. CC Switch's base64 `config` is read too; `usage*` parameters are ignored.
 - `agentplus://` links may also set `api` (`responses`, `chat`, `anthropic`, `gemini`) and `models` (comma-separated).
 
-A link only fills in the dialog: nothing is saved until you click Add.
+A link fills in the dialog; nothing is saved until you click Add. A link can contain an API
+key, so treat it as a secret and check the destination before fetching models or testing it.
 
 ## Building from source
 
-AgentPlus is built on [Tauri 2](https://tauri.app): React and TypeScript in `src/`, Rust in `src-tauri/`. You'll need Node.js 18+, Rust 1.88+ and the [Tauri prerequisites](https://tauri.app/start/prerequisites/).
+AgentPlus is built on [Tauri 2](https://tauri.app): React and TypeScript in `src/`, Rust in `src-tauri/`. You'll need Node.js 18+, the current stable Rust toolchain and the [Tauri prerequisites](https://tauri.app/start/prerequisites/).
 
 Install dependencies and start the development app:
 
 ```bash
-npm install
+npm ci
 npm run tauri dev
 ```
 
@@ -176,10 +207,28 @@ Build and run checks:
 ```bash
 npm run tauri build    # Build the installer
 npm run check          # Frontend type checks and tests
-cd src-tauri && cargo clippy --all-targets && cargo test
+cd src-tauri && cargo clippy --all-targets -- -D warnings && cargo test
 ```
 
 To preview the interface in a browser with demo data, run `npm run dev`.
+
+See the [architecture](docs/architecture.md), [development and release guide](docs/development-and-release.md)
+and [contribution guide](CONTRIBUTING.md) for current workflows. The old
+[design draft](docs/design.html) is historical and includes features that did not ship.
+
+## Data and support
+
+Provider keys and configuration backups can be stored in plain text on this computer.
+Privacy mode masks the interface; it does not encrypt files or the clipboard. Sync-file
+encryption is optional and separate from local key storage. AgentPlus also makes network
+requests for updates, model metadata, latency checks and the providers you use. Read the
+[data and network guide](docs/data-and-network.md) before sharing files or enabling sync.
+
+Report reproducible bugs and scoped feature requests through
+[GitHub Issues](https://github.com/cnklpz/AgentPlus/issues). Include the AgentPlus version,
+OS, affected agent version and redacted reproduction steps. Maintenance is best effort;
+there is no guaranteed response time. Use the [security reporting instructions](SECURITY.md)
+for vulnerabilities, without posting keys, configuration files or exploit details publicly.
 
 ## License
 
