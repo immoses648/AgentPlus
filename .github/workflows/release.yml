@@ -1,7 +1,8 @@
 name: Release
 
-# Pushing a tag like v0.2.0 builds the signed Windows installer and the macOS apps (Apple
-# silicon and Intel, one each) and puts them, with the updater's latest.json, on a draft GitHub
+# Pushing a tag like v0.2.0 checks the tagged commit, then builds updater-signed packages
+# for Windows and macOS (Apple silicon and Intel, one each) and puts them, with the
+# updater's latest.json, on a draft GitHub
 # release. Publishing that draft is what makes installed copies see the update (the updater
 # reads releases/latest, which skips drafts).
 #
@@ -27,10 +28,16 @@ permissions:
   contents: write
 
 jobs:
-  # One draft for every platform: each build job below uploads to it and merges its entry
-  # into latest.json (two jobs creating the release themselves would race into two drafts).
+  checks:
+    if: github.ref_type == 'tag'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/ci.yml
+
+  # One draft for every platform; updater-json writes the shared manifest after all uploads.
   create-release:
     if: github.ref_type == 'tag'
+    needs: checks
     runs-on: ubuntu-latest
     outputs:
       id: ${{ steps.create.outputs.id }}
