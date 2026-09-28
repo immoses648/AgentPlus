@@ -273,6 +273,11 @@ async fn backup_detail(id: String) -> Result<history::BackupDetail, String> {
 }
 
 #[tauri::command]
+async fn delete_backup(id: String) -> Result<(), String> {
+    blocking(move || history::delete(&id)).await
+}
+
+#[tauri::command]
 async fn restore_backup(id: String) -> Result<String, String> {
     blocking(move || {
         let msg = history::restore(&id)?;
@@ -776,6 +781,7 @@ pub fn run() {
             guess_models,
             list_backups,
             backup_detail,
+            delete_backup,
             restore_backup,
             sync_status,
             sync_set_folder,

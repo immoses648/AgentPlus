@@ -8,6 +8,7 @@ import { useLoad } from "../hooks";
 import { ErrorBox } from "./controls";
 import { errText, type Flash, onActivateKey } from "../util";
 import { agentLabel } from "../services";
+import { ask } from "./Confirm";
 
 /** AgentPlus's own maintenance jobs (translated); backups of agents show the product name. */
 const JOBS: Record<string, TKey> = {
@@ -51,6 +52,23 @@ export function HistoryPage({ flash, onChanged }: { flash: Flash; onChanged: () 
     }
   };
 
+  const remove = async (b: BackupEntry) => {
+    if (busy || !b.deletable) return;
+    if (!await ask({ title: t("historyPage.deleteTitle"), message: t("historyPage.deleteHint", { stamp: fmtStamp(b.stamp), agent: agentName(b.agent) }), danger: true, confirmText: t("historyPage.deleteBackup") })) return;
+    setBusy(true);
+    try {
+      await api.deleteBackup(b.id);
+      setSel(null);
+      setConfirm(null);
+      await reload();
+      flash(t("historyPage.deleted"));
+    } catch (e) {
+      flash(errText(e), true);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const picked = list?.find((b) => b.id === sel) ?? null;
   const rollback = (b: BackupEntry, small: boolean) => !b.restorable ? (
     <span className="tiny muted" title={scrub(b.blocked) ?? undefined}>{t(b.blockedMissing ? "historyPage.fileGone" : "historyPage.noAutoRollback")}</span>
@@ -60,7 +78,7 @@ export function HistoryPage({ flash, onChanged }: { flash: Flash; onChanged: () 
       <button className={`btn primary${small ? " small" : ""}`} disabled={busy} onClick={() => restore(b.id)}>{t(busy ? "historyPage.rollingBack" : "historyPage.confirmRollback")}</button>
     </>
   ) : (
-    <button className={`btn${small ? " small" : ""}`} onClick={() => setConfirm(b.id)}>{t("historyPage.rollbackBefore")}</button>
+    <button className={`btn${small ? " small" : ""}`} disabled={busy} onClick={() => setConfirm(b.id)}>{t("historyPage.rollbackBefore")}</button>
   );
 
   return (
@@ -76,6 +94,7 @@ export function HistoryPage({ flash, onChanged }: { flash: Flash; onChanged: () 
           </div>
         </div>
         <div className="page-body">
+          <p className="small muted hint">{t("historyPage.retention")}</p>
           {error && (list ? <ErrorBox text={error} /> : <div className="empty">{scrub(error)}</div>)}
           {!list && !error && <div className="empty">{t("common.reading")}</div>}
           {list && list.length === 0 && <div className="empty">{t("historyPage.empty")}</div>}
@@ -102,7 +121,10 @@ export function HistoryPage({ flash, onChanged }: { flash: Flash; onChanged: () 
       </main>
       <aside className="aside" aria-label={t("historyPage.detailTitle")}>
         {picked ? (
-          <HistoryDetail key={picked.id + rev + lang} b={picked} onClose={() => setSel(null)} actions={rollback(picked, false)} />
+          <HistoryDetail key={picked.id + rev + lang} b={picked} onClose={() => setSel(null)} actions={<>
+            {rollback(picked, false)}
+            {picked.deletable && <button className="btn danger" disabled={busy} onClick={() => void remove(picked)}>{t("historyPage.deleteBackup")}</button>}
+          </>} />
         ) : (
           <section className="aside-cur">
             <h2>{t("historyPage.detailTitle")}</h2>

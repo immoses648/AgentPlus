@@ -2,7 +2,7 @@
 
 use crate::i18n::l;
 use crate::util::*;
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use serde::Serialize;
 use serde_json::Value;
 use std::fs;
@@ -20,6 +20,8 @@ pub struct BackupEntry {
     pub bytes: u64,
     /// Every file knows where it goes back to, and that file still exists.
     pub restorable: bool,
+    /// An ordinary configuration backup whose files can be safely removed.
+    pub deletable: bool,
     /// Why it can't be rolled back automatically.
     pub blocked: Option<String>,
     /// Blocked because the original file is gone (the UI shows a short label for it).
@@ -142,7 +144,9 @@ fn read_entry(stamp: &str, agent_dir: &Path) -> Option<BackupEntry> {
     } else {
         None
     };
-    Some(BackupEntry { id: format!("{stamp}/{agent}"), stamp: stamp.into(), agent, reason, files, bytes, restorable: blocked.is_none(), blocked, blocked_missing })
+    let id = format!("{stamp}/{agent}");
+    let deletable = deletion_files(&id).is_ok();
+    Some(BackupEntry { id, stamp: stamp.into(), agent, reason, files, bytes, restorable: blocked.is_none(), deletable, blocked, blocked_missing })
 }
 
 /// Backup reasons are stored in the language of the moment; show the known fixed ones
@@ -191,6 +195,75 @@ fn backup_dir(id: &str) -> Result<(&str, &str, PathBuf)> {
         Some((stamp, agent)) if plain_name(stamp) && plain_name(agent) => Ok((stamp, agent, root().join(stamp).join(agent))),
         _ => Err(anyhow!(l("Invalid backup", "无效的备份"))),
     }
+}
+
+fn linked(metadata: &fs::Metadata) -> bool {
+    if metadata.file_type().is_symlink() {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        metadata.file_attributes() & 0x400 != 0
+    }
+    #[cfg(not(windows))]
+    false
+}
+
+/// Validate the entire flat backup before removing anything. Paths in its manifest are
+/// original destinations and are deliberately never used as deletion targets.
+fn deletion_files(id: &str) -> Result<(PathBuf, Vec<PathBuf>)> {
+    let (stamp, agent, dir) = backup_dir(id)?;
+    if !crate::adapters::ALL.contains(&agent) {
+        bail!("{}", l("Only ordinary agent configuration backups can be deleted here", "这里只能删除普通 Agent 配置备份"));
+    }
+    let invalid = || anyhow!(l("This backup is not a safe, ordinary configuration backup and cannot be deleted here", "这份备份不是安全的普通配置备份，不能在这里删除"));
+    let backup_root = root();
+    let stamp_dir = backup_root.join(stamp);
+    for path in [&backup_root, &stamp_dir, &dir] {
+        let metadata = fs::symlink_metadata(path).with_context(|| tr!("Can't inspect backup {id}", "无法检查备份 {id}"))?;
+        if linked(&metadata) || !metadata.is_dir() {
+            return Err(invalid());
+        }
+    }
+    let canonical_root = fs::canonicalize(&backup_root)?;
+    let canonical_stamp = fs::canonicalize(&stamp_dir)?;
+    let canonical_dir = fs::canonicalize(&dir)?;
+    if canonical_stamp.parent() != Some(canonical_root.as_path()) || canonical_dir.parent() != Some(canonical_stamp.as_path())
+        || canonical_dir == canonical_root || !canonical_dir.starts_with(&canonical_root) {
+        return Err(invalid());
+    }
+    let mut files = vec![];
+    for entry in fs::read_dir(&dir)? {
+        let path = entry?.path();
+        let metadata = fs::symlink_metadata(&path)?;
+        if linked(&metadata) || !metadata.is_file() || fs::canonicalize(&path)?.parent() != Some(canonical_dir.as_path()) {
+            return Err(invalid());
+        }
+        files.push(path);
+    }
+    let manifest = read_manifest(&dir).ok_or_else(invalid)?;
+    let reason = manifest["reason"].as_str().ok_or_else(invalid)?;
+    let ordinary = [REASON_APPLY.0, REASON_APPLY.1].contains(&reason)
+        || reason.starts_with("Before rolling back to ") || (reason.starts_with("回滚到 ") && reason.ends_with(" 之前"))
+        || reason.starts_with("Project config · ") || reason.starts_with("项目配置 · ");
+    if manifest["agent"].as_str() != Some(agent) || !manifest["files"].is_array() || !ordinary {
+        return Err(invalid());
+    }
+    // Keep the manifest until last, so an interrupted deletion still has its identity.
+    files.sort_by_key(|path| path.file_name().is_some_and(|name| name == "manifest.json"));
+    Ok((dir, files))
+}
+
+pub fn delete(id: &str) -> Result<()> {
+    crate::store::transaction(|| {
+        crate::store::load_checked()?;
+        let (dir, files) = deletion_files(id)?;
+        for path in files {
+            fs::remove_file(&path).with_context(|| tr!("Couldn't delete file in backup {id}", "无法删除备份 {id} 中的文件"))?;
+        }
+        fs::remove_dir(&dir).with_context(|| tr!("Couldn't delete backup {id}", "无法删除备份 {id}"))
+    })
 }
 
 /// Copies a backup's files back to their original places. The current files are
@@ -498,6 +571,132 @@ fn mask_secrets(line: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn id_of(dir: &Path) -> String {
+        format!("{}/{}", dir.parent().unwrap().file_name().unwrap().to_string_lossy(), dir.file_name().unwrap().to_string_lossy())
+    }
+
+    #[test]
+    fn deleting_one_backup_keeps_live_files_and_other_backups() {
+        let h = TestHome::new("history-delete");
+        let config = h.0.join("config.toml");
+        fs::write(&config, "original").unwrap();
+        let selected = backup("codex", std::slice::from_ref(&config)).unwrap();
+        let sibling = backup("claude", std::slice::from_ref(&config)).unwrap();
+        let later = backup("codex", std::slice::from_ref(&config)).unwrap();
+        fs::write(&config, "current").unwrap();
+        let id = id_of(&selected);
+        let entries = list().unwrap();
+        assert!(entries.iter().any(|e| e.id == id && e.deletable));
+        assert!(entries.iter().any(|e| e.id == id_of(&sibling) && e.deletable && !e.restorable), "deletion is independent of rollback support");
+        delete(&id).unwrap();
+        assert!(!selected.exists());
+        assert_eq!(fs::read_to_string(&config).unwrap(), "current");
+        assert_eq!(fs::read_to_string(sibling.join("config.toml")).unwrap(), "original");
+        assert_eq!(fs::read_to_string(later.join("config.toml")).unwrap(), "original");
+        assert!(delete(&id).is_err(), "an absent backup is not reported as deleted");
+        assert!(list().unwrap().iter().all(|e| e.id != id));
+    }
+
+    #[test]
+    fn deleting_backup_refuses_invalid_ids_and_special_recovery_data() {
+        let h = TestHome::new("history-delete-invalid");
+        let config = h.0.join("config.toml");
+        fs::write(&config, "keep").unwrap();
+        for id in ["", "/codex", "../codex", "stamp/../codex", "stamp/codex/extra", "stamp/..", "stamp\\codex", "C:/codex", "missing/codex"] {
+            assert!(delete(id).is_err(), "{id}");
+        }
+        for agent in ["codex-repair", "codex-cleanup", "unknown"] {
+            let dir = backup(agent, std::slice::from_ref(&config)).unwrap();
+            assert!(delete(&id_of(&dir)).is_err());
+            assert!(!list().unwrap().into_iter().find(|e| e.id == id_of(&dir)).unwrap().deletable);
+            assert_eq!(fs::read_to_string(dir.join("config.toml")).unwrap(), "keep");
+        }
+        let official = backup_tagged("codex", std::slice::from_ref(&config), REASON_OFFICIAL.0).unwrap();
+        assert!(delete(&id_of(&official)).is_err(), "official-fetch recovery must stay available");
+        assert_eq!(fs::read_to_string(official.join("config.toml")).unwrap(), "keep");
+    }
+
+    #[test]
+    fn deleting_backup_validates_every_file_before_removing_anything() {
+        let h = TestHome::new("history-delete-tree");
+        let config = h.0.join("config.toml");
+        fs::write(&config, "keep").unwrap();
+        let dir = backup("codex", std::slice::from_ref(&config)).unwrap();
+        fs::create_dir(dir.join("nested")).unwrap();
+        fs::write(dir.join("nested").join("extra"), "nested data").unwrap();
+        assert!(delete(&id_of(&dir)).is_err());
+        assert_eq!(fs::read_to_string(dir.join("config.toml")).unwrap(), "keep");
+        assert_eq!(fs::read_to_string(dir.join("nested").join("extra")).unwrap(), "nested data");
+        assert!(!list().unwrap().into_iter().find(|e| e.id == id_of(&dir)).unwrap().deletable);
+    }
+
+    #[test]
+    fn deleting_backup_requires_an_ordinary_manifest() {
+        let h = TestHome::new("history-delete-manifest");
+        let config = h.0.join("config.toml");
+        fs::write(&config, "keep").unwrap();
+        let dir = backup("codex", std::slice::from_ref(&config)).unwrap();
+        for manifest in ["{bad", "{}", r#"{"agent":"claude","reason":"Apply config","files":[]}"#] {
+            fs::write(dir.join("manifest.json"), manifest).unwrap();
+            assert!(delete(&id_of(&dir)).is_err());
+            assert_eq!(fs::read_to_string(dir.join("config.toml")).unwrap(), "keep");
+        }
+        fs::remove_file(dir.join("manifest.json")).unwrap();
+        assert!(delete(&id_of(&dir)).is_err());
+        assert_eq!(fs::read_to_string(dir.join("config.toml")).unwrap(), "keep");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn deleting_backup_refuses_symlinks_at_every_boundary() {
+        let h = TestHome::new("history-delete-links");
+        let config = h.0.join("config.toml");
+        fs::write(&config, "keep").unwrap();
+        let dir = backup("codex", std::slice::from_ref(&config)).unwrap();
+        let id = id_of(&dir);
+        let outside = h.0.join("outside");
+        fs::create_dir(&outside).unwrap();
+        fs::write(outside.join("private"), "outside data").unwrap();
+        let file_link = dir.join("external");
+        std::os::unix::fs::symlink(outside.join("private"), &file_link).unwrap();
+        assert!(delete(&id).is_err());
+        fs::remove_file(&file_link).unwrap();
+        std::os::unix::fs::symlink(&outside, &file_link).unwrap();
+        assert!(delete(&id).is_err());
+        fs::remove_file(&file_link).unwrap();
+        for (i, path) in [dir.clone(), dir.parent().unwrap().to_path_buf(), root()].into_iter().enumerate() {
+            let saved = h.0.join(format!("saved-{i}"));
+            fs::rename(&path, &saved).unwrap();
+            std::os::unix::fs::symlink(&saved, &path).unwrap();
+            assert!(delete(&id).is_err());
+            fs::remove_file(&path).unwrap();
+            fs::rename(&saved, &path).unwrap();
+        }
+        assert_eq!(fs::read_to_string(outside.join("private")).unwrap(), "outside data");
+        assert_eq!(fs::read_to_string(dir.join("config.toml")).unwrap(), "keep");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn deleting_backup_refuses_windows_junctions() {
+        let h = TestHome::new("history-delete-junction");
+        let config = h.0.join("config.toml");
+        fs::write(&config, "keep").unwrap();
+        let dir = backup("codex", std::slice::from_ref(&config)).unwrap();
+        let id = id_of(&dir);
+        for (i, path) in [dir.clone(), dir.parent().unwrap().to_path_buf(), root()].into_iter().enumerate() {
+            let saved = h.0.join(format!("saved-{i}"));
+            fs::rename(&path, &saved).unwrap();
+            let out = std::process::Command::new("cmd.exe").args(["/C", "mklink", "/J"]).arg(&path).arg(&saved).output().unwrap();
+            assert!(out.status.success(), "could not create test junction");
+            assert!(linked(&fs::symlink_metadata(&path).unwrap()));
+            assert!(delete(&id).is_err());
+            fs::remove_dir(&path).unwrap();
+            fs::rename(&saved, &path).unwrap();
+        }
+        assert_eq!(fs::read_to_string(dir.join("config.toml")).unwrap(), "keep");
+    }
 
     #[test]
     fn profile_snapshots_are_scoped_reviewable_and_reversible() {

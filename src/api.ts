@@ -405,6 +405,8 @@ export interface BackupEntry {
   files: { name: string; path: string | null }[];
   bytes: number;
   restorable: boolean;
+  /** An ordinary config backup that can be explicitly removed. */
+  deletable: boolean;
   /** Why it can't be rolled back automatically (original file gone, database backup…). */
   blocked: string | null;
   /** Blocked because the original file is gone. */
@@ -677,6 +679,7 @@ const real = {
   listBackups: () => invoke<BackupEntry[]>("list_backups"),
   backupDetail: (id: string) => invoke<BackupDetail>("backup_detail", { id }),
   restoreBackup: (id: string) => invoke<string>("restore_backup", { id }),
+  deleteBackup: (id: string) => invoke<void>("delete_backup", { id }),
   syncStatus: () => invoke<SyncStatus>("sync_status"),
   syncSetFolder: (path: string) => invoke<void>("sync_set_folder", { path }),
   syncExport: () => invoke<string>("sync_export"),
@@ -877,6 +880,8 @@ async function demoProject(agent: string): Promise<AgentState> {
   };
 }
 
+const demoDeletedBackups = new Set<string>();
+
 const demo: typeof real = {
   listAgents: fixture,
   checkStore: async () => undefined,
@@ -941,9 +946,9 @@ const demo: typeof real = {
   guessModels: async (_agent, ids) =>
     Object.fromEntries(ids.filter((id) => /^(glm|kimi|deepseek|gpt|qwen)/i.test(id)).map((id) => [id, { context: 200000, extra: {}, matched: id.toLowerCase(), source: "builtin" as const }])),
   listBackups: async () => [
-    { id: "20260923-140512/codex", stamp: "20260923-140512", agent: "codex", reason: "应用配置", files: [{ name: "config.toml", path: "C:\\Users\\me\\.codex\\config.toml" }], bytes: 10240, restorable: true, blocked: null, blockedMissing: false },
-    { id: "20260923-131201/zcode", stamp: "20260923-131201", agent: "zcode", reason: "应用配置", files: [{ name: "provider_config.json", path: "C:\\Users\\me\\.zcode\\v2\\provider_config.json" }], bytes: 19329, restorable: true, blocked: null, blockedMissing: false },
-  ],
+    { id: "20260923-140512/codex", stamp: "20260923-140512", agent: "codex", reason: "应用配置", files: [{ name: "config.toml", path: "C:\\Users\\me\\.codex\\config.toml" }], bytes: 10240, restorable: true, deletable: true, blocked: null, blockedMissing: false },
+    { id: "20260923-131201/zcode", stamp: "20260923-131201", agent: "zcode", reason: "应用配置", files: [{ name: "provider_config.json", path: "C:\\Users\\me\\.zcode\\v2\\provider_config.json" }], bytes: 19329, restorable: true, deletable: true, blocked: null, blockedMissing: false },
+  ].filter((b) => !demoDeletedBackups.has(b.id)),
   backupDetail: async (id) => ({
     id, dir: `~/.agentplus/backups/${id}`, time: "2026-09-23T14:05:12+08:00",
     files: [{
@@ -964,6 +969,7 @@ const demo: typeof real = {
     }],
   }),
   restoreBackup: async () => "（演示）已回滚",
+  deleteBackup: async (id) => { demoDeletedBackups.add(id); },
   syncStatus: async () => ({ ...demoSync }),
   syncSetFolder: async (path) => { demoSync.folder = path; },
   syncHistory: async () => (demoSync.folder ? demoHistory.slice(0, demoSync.options.keep) : []),

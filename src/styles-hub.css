@@ -561,7 +561,7 @@ button, input, textarea, select { font-family: inherit; }
 .hd-key { font-weight: 600; padding: 0 3px; border-radius: 3px; }
 .hd-key.add { background: var(--add-bg); color: var(--add); }
 .hd-key.del { background: var(--del-bg); color: var(--del); }
-.hd-actions { justify-content: flex-end; }
+.hd-actions { justify-content: flex-end; flex-wrap: wrap; }
 
 /* Supported agents: logo wall */
 .agent-wall { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 8px; }
